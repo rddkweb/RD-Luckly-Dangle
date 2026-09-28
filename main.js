@@ -170,6 +170,7 @@ function createPet() {
     focusable: false,
     show: false,
     backgroundColor: '#00000000',
+    icon: path.join(__dirname, 'assets', 'icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -217,6 +218,7 @@ function createSettings() {
     resizable: false,
     title: 'RD Luckly Dangle - Settings',
     backgroundColor: '#14112b',
+    icon: path.join(__dirname, 'assets', 'icon-256.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

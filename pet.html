@@ -457,10 +457,10 @@
   let physAcc = 0;
   const ROPE_GRAV = 60000;
   const ropeConfigs = {
-    braid:  { segs: 14, rlen: 4.0, damp: 0.9965, grav: 0.95, iters: 10, stretch: 1.02 },
-    cord:   { segs: 18, rlen: 3.1, damp: 0.9950, grav: 1.06, iters: 9, stretch: 1.015 },
-    twist:  { segs: 11, rlen: 5.1, damp: 0.9970, grav: 0.90, iters: 12, stretch: 1.01 },
-    ribbon: { segs: 12, rlen: 4.7, damp: 0.9960, grav: 0.98, iters: 10, stretch: 1.03 }
+    braid:  { segs: 14, rlen: 4.0, damp: 0.9965, grav: 0.95, iters: 10, stretch: 1 },
+    cord:   { segs: 18, rlen: 3.1, damp: 0.9950, grav: 1.06, iters: 9, stretch: 1 },
+    twist:  { segs: 11, rlen: 5.1, damp: 0.9970, grav: 0.90, iters: 12, stretch: 1 },
+    ribbon: { segs: 12, rlen: 4.7, damp: 0.9960, grav: 0.98, iters: 10, stretch: 1 }
   };
   let ropeCfg = ropeConfigs.braid;
   let ropePts = [];
@@ -471,21 +471,24 @@
   let lastDragT = 0;
   let dragVelX = 0;
   let dragVelY = 0;
-  let dragShake = 0;
   let rotateSmooth = 0;
   let shadowSmooth = 0;
   let petSize = 140;
   let lastSizeW = 0;
   let lastSizeH = 0;
   let ropeSegLen = 4;
-  // Constraint rest length per link: ropeSegLen plus the texture's stretch,
-  // so the chain carries 1-3% slack and drapes with a natural droop instead
-  // of rendering as a rigid straight line.
+  // Constraint rest length per link. The chain's total length equals the
+  // pendulum arm exactly, so the rope hangs taut and stable — no buckling or
+  // micro-jitter from over-long links at rest, and the on-screen length always
+  // matches the selected rope length.
   let linkLen = 4;
   let ropeLengthPct = 100;
   let swingA = 0;
   let swingV = 0;
   let leanSmooth = 0;
+  let animOffX = 0;
+  let animOffY = 0;
+  let clampAngle = 0.6;
 
   /* Maximum swing angle that keeps the pet fully inside the window. Beyond
      it the pet would clip through the transparent window's edge. */
@@ -509,7 +512,8 @@
       /* Low-pass the lean target first: raw cursor velocity is noisy at
          pointer-event rate, and feeding it straight into the spring makes the
          pet shiver. The filter keeps one clean, continuous trailing motion. */
-      const raw = Math.max(-0.85, Math.min(0.85, -dragVelX / 1400));
+      const Amax = clampAngle;
+      const raw = Math.max(-Amax, Math.min(Amax, -dragVelX / 1400));
       leanSmooth += (raw - leanSmooth) * Math.min(1, 16 * dt);
       swingV += (leanSmooth - swingA) * 120 * dt;
       swingV *= Math.exp(-6 * dt);
@@ -518,13 +522,18 @@
     }
     const om = (2 * Math.PI / 1.5) * Math.sqrt(224 / L) * Math.sqrt(speed);
     swingV += (-om * om * swingA) * dt;
-    swingV *= Math.exp(-0.45 * dt);
+    /* Energy tuned from measured on-screen motion (a flick that starts at
+       ~90px sways down through ~20px by the second period and is basically at
+       rest in 3-4 seconds) — visible natural damping without a sluggish drag. */
+    swingV *= Math.exp(-1.0 * dt);
     swingA += swingV * dt;
-    /* Hard stop at the window-safe angle: the rope momentarily goes slack
-       instead of the pet clipping through the window edge. */
-    const Afit = swingClampA();
-    if (swingA > Afit) { swingA = Afit; if (swingV > 0) swingV = 0; }
-    else if (swingA < -Afit) { swingA = -Afit; if (swingV < 0) swingV = 0; }
+    /* Soft bounce at the window-safe angle: the rope goes slack briefly and
+       the pet drifts back in instead of the velocity snapping to zero (which
+       read as a hard, robotic direction change). The reflection bleeds energy
+       on every hit, so the wrap never turns into a sustained oscillation. */
+    const Afit = clampAngle;
+    if (swingA > Afit) { swingA = Afit; if (swingV > 0) swingV = -swingV * 0.35; }
+    else if (swingA < -Afit) { swingA = -Afit; if (swingV < 0) swingV = -swingV * 0.35; }
     if (Math.abs(swingA) < 0.004 && Math.abs(swingV) < 0.02) { swingA = 0; swingV = 0; }
   }
 
@@ -536,6 +545,43 @@
      Clamped so the pet always stays fully inside the window. */
   function petHangY() {
     return Math.max(40, Math.min(ropeSegLen * ropeCfg.segs, stage.clientHeight - 12 - petSize));
+  }
+
+  /* The pet's CSS animation offset (bounce, float, jump...) read from its own
+     computed transform once per frame. Cheap (style-only, no layout) and keeps
+     the rope pinned to the pet even while animations move it — the old code
+     read getBoundingClientRect() inside the physics loop every frame. */
+  function updateAnimOffset() {
+    const tr = getComputedStyle(petContainer).transform;
+    if (!tr || tr === 'none') { animOffX = 0; animOffY = 0; return; }
+    let a, b, e, f;
+    if (tr.indexOf('matrix3d') === 0) {
+      const v = tr.slice(9, -1).split(',').map(Number);
+      a = v[0]; b = v[1]; e = v[12]; f = v[13];
+    } else {
+      const m = tr.match(/matrix\(([^)]+)\)/);
+      const v = m ? m[1].split(',').map(Number) : [];
+      a = v[0] || 1; b = v[1] || 0; e = v[4] || 0; f = v[5] || 0;
+    }
+    /* Map the pet's TOP-CENTER through the animation matrix (about the
+       container midline, transform-origin 50% 50%), so rotated animations
+       (wobble, float) keep the rope attached instead of only tracking the
+       translate part. */
+    const hw = petSize / 2;
+    animOffX = (a - 1) * hw + e;
+    animOffY = b * hw + f;
+  }
+
+  /* Single source of truth for where the rope meets the pet. In swing mode it
+     is the pendulum bob; in every other mode it is the hang point plus the
+     animation's own offset. The pet rig, the knot and the rope path all derive
+     from this one point, so nothing ever drifts out of sync. */
+  function ropeAttach() {
+    if (baseAnim === 'swing' && currentAnim === 'swing') {
+      const L = ropeSegLen * ropeCfg.segs;
+      return { x: ropeAnchorX() + Math.sin(swingA) * L, y: L * Math.cos(swingA) };
+    }
+    return { x: ropeAnchorX() + animOffX, y: petHangY() + animOffY };
   }
 
   /* (re)build the segments. Anchor pinned at the top-center; the rope's rest
@@ -559,16 +605,6 @@
       const y = i * ropeSegLen;
       ropePts.push({ x: ax, y });
       ropePrev.push({ x: ax, y });
-    }
-    wakeRope();
-  }
-
-  function nudgeRope(dx, dy) {
-    const n = ropeCfg.segs;
-    for (let i = 1; i <= n; i++) {
-      const k = 0.28 * (i / n);
-      ropePrev[i].x -= dx * k;
-      ropePrev[i].y -= dy * k * 0.5;
     }
     wakeRope();
   }
@@ -616,29 +652,20 @@
 
   function drawRope() {
     const n = ropeCfg.segs;
-    if (isDragging && dragShake > 0.25) {
-      ropePts[n].x += (Math.random() - 0.5) * dragShake * 0.9;
-      ropePts[n].y += (Math.random() - 0.5) * dragShake * 0.4;
-    }
-    const tail = ropePts[n];
-    const ropeTop = 0;
+    const at = ropeAttach();
     const cx = ropeAnchorX();
 
     if (baseAnim === 'swing' && currentAnim === 'swing') {
       /* The pet hangs ON the rope end: its top-center sits exactly on the tail
          and the pendulum angle drives the swing. The rig carries this transform
          so interaction animations (bounce, jump...) compose on top of it. */
-      const L = ropeSegLen * ropeCfg.segs;
-      const bobX = cx + Math.sin(swingA) * L;
-      const bobY = L * Math.cos(swingA);
-      tail.x = bobX;
-      tail.y = bobY;
       const targetDeg = swingA * 180 / Math.PI;
       const rotK = 1 - Math.pow(1 - 0.6, Math.max(0.001, frameDt) * 60);
       rotateSmooth += (targetDeg - rotateSmooth) * rotK;
       petRig.style.transform =
-        'translate(' + (bobX - petSize / 2).toFixed(1) + 'px,' + bobY.toFixed(1) + 'px)' +
+        'translate(' + (at.x - petSize / 2).toFixed(1) + 'px,' + at.y.toFixed(1) + 'px)' +
         ' rotate(' + rotateSmooth.toFixed(2) + 'deg)';
+      const L = ropeSegLen * ropeCfg.segs;
       const starget = Math.sin(swingA) * L * 0.6;
       const shK = 1 - Math.pow(1 - 0.3, Math.max(0.001, frameDt) * 60);
       shadowSmooth += (starget - shadowSmooth) * shK;
@@ -647,26 +674,29 @@
       /* Any other animation: the pet stays hanging at the rope end (straight
          hang, no rotation) and the rope follows the pet's real position —
          knot glued to the pet, no gap, no jump when animations switch. */
-      const rx = cx - petSize / 2;
-      const ry = petHangY();
-      petRig.style.transform = 'translate(' + rx.toFixed(1) + 'px,' + ry.toFixed(1) + 'px)';
-      const pr = petContainer.getBoundingClientRect();
-      const sr = stage.getBoundingClientRect();
-      tail.x += ((pr.left - sr.left + pr.width / 2) - tail.x) * 0.45;
-      tail.y += ((pr.top - sr.top) - tail.y) * 0.45;
-      const starget = (tail.x - cx) * 0.5;
+      petRig.style.transform =
+        'translate(' + (cx - petSize / 2).toFixed(1) + 'px,' + petHangY().toFixed(1) + 'px)';
+      const starget = (at.x - cx) * 0.5;
       shadowSmooth += (starget - shadowSmooth) * 0.3;
       groundShadow.style.transform = 'translateX(calc(-50% + ' + shadowSmooth.toFixed(1) + 'px))';
     }
 
-    knotEl.style.left = tail.x + 'px';
-    knotEl.style.top = tail.y + 'px';
+    knotEl.style.left = at.x + 'px';
+    knotEl.style.top = at.y + 'px';
 
     let d = 'M ' + ropePts[0].x.toFixed(1) + ' ' + ropePts[0].y.toFixed(1);
-    for (let i = 1; i <= n; i++) {
+    for (let i = 1; i < n; i++) {
       const a = ropePts[i - 1];
       const b = ropePts[i];
       d += ' Q ' + a.x.toFixed(1) + ' ' + a.y.toFixed(1) + ' ' + ((a.x + b.x) / 2).toFixed(1) + ' ' + ((a.y + b.y) / 2).toFixed(1);
+    }
+    /* The final segment ends exactly on the tail (the pet's attach point), not
+       on a midpoint — the drawn rope can never appear a half-segment short of
+       the pet, which read as "the rope lags behind / detaches" during swings. */
+    {
+      const a = ropePts[n - 1];
+      const b = ropePts[n];
+      d += ' Q ' + a.x.toFixed(1) + ' ' + a.y.toFixed(1) + ' ' + b.x.toFixed(1) + ' ' + b.y.toFixed(1);
     }
     ropePath.setAttribute('d', d);
     ropePath2.setAttribute('d', d);
@@ -686,22 +716,22 @@
     const dt = Math.min(0.05, Math.max(0.001, (t - lastFrame) / 1000 || 0.016));
     frameDt = dt;
     lastFrame = t;
+    updateAnimOffset();
+    /* Cache the (window-geometry dependent) safe swing angle once per frame
+       instead of reading clientWidth inside every 240 Hz substep. */
+    clampAngle = swingClampA();
     const n = ropeCfg.segs;
     physAcc = Math.min(0.25, physAcc + dt);
     while (physAcc >= PHYS_DT) {
       updateSwing(PHYS_DT);
       stepRope(PHYS_DT);
-      /* Pin the free end where the pet hangs, every substep — while dragging
-         too, so the rope drapes off the moving pet with zero lag or jitter
-         instead of rubber-banding behind it. */
-      const L = ropeSegLen * ropeCfg.segs;
-      if (baseAnim === 'swing' && currentAnim === 'swing') {
-        ropePts[n].x = ropeAnchorX() + Math.sin(swingA) * L;
-        ropePts[n].y = L * Math.cos(swingA);
-      } else if (isDragging) {
-        ropePts[n].x = ropeAnchorX();
-        ropePts[n].y = petHangY();
-      }
+      /* Pin the rope's free end exactly where the pet hangs (anchor is the
+         window-top center). One source of truth for rig, knot and rope path,
+         applied every substep, so the rope never lags a frame behind the pet,
+         never stretches and never opens a gap — while dragging too. */
+      const at = ropeAttach();
+      ropePts[n].x = at.x;
+      ropePts[n].y = at.y;
       physAcc -= PHYS_DT;
     }
     drawRope();
@@ -1031,7 +1061,6 @@
     lastDragT = performance.now();
     dragVelX = 0;
     dragVelY = 0;
-    dragShake = 0;
     leanSmooth = swingA;
     document.body.style.cursor = 'grabbing';
     document.body.classList.add('dragging');
@@ -1058,16 +1087,17 @@
     petContainer.classList.remove('dragging');
     dragVelX = 0;
     dragVelY = 0;
-    dragShake = 0;
     activePointerId = null;
     api.send('end-drag');
     if (released && wasMoved) {
       /* Continuous handoff: swingA/swingV already carry the drag spring's
          exact state, so the pendulum takes over seamlessly — no angle snap,
-         no forced velocity. A fast horizontal flick ADDS speed on top of the
-         natural release velocity; a gentle release just lets it drift back. */
+         no forced velocity. A fast horizontal flick seeds the pendulum with
+         cursor-speed-derived angular velocity (rad/s ≈ v/L, capped so the arc
+         stays inside the window); a gentle release just lets it drift back. */
       if (flickSpeed > 320) {
-        swingV = flickDir * Math.min(3.8, Math.abs(swingV) + (flickSpeed - 320) * 0.0015);
+        const kick = Math.min(2.0, Math.abs(dragVelX) * 0.001);
+        swingV = flickDir * Math.max(kick, Math.min(Math.abs(swingV), 2.0));
         spawnParticles(3, ['💨', '💨', '💫']);
         setMood('excited');
       } else {
@@ -1096,7 +1126,6 @@
        their native rate and the lean spring amplifies every spike. */
     dragVelX = dragVelX * 0.7 + (isFinite(vx) ? vx : 0) * 0.3;
     dragVelY = dragVelY * 0.7 + (isFinite(vy) ? vy : 0) * 0.3;
-    dragShake = Math.max(dragShake * 0.92, Math.min(3, Math.hypot(dragVelX, dragVelY) / 1500));
     currentX = e.screenX;
     currentY = e.screenY;
     totalDrag = Math.sqrt((currentX - pressX) ** 2 + (currentY - pressY) ** 2);
@@ -1165,14 +1194,19 @@
     }
   });
   api.on('window-motion', (m) => {
-    if (m && typeof m.dx === 'number' && typeof m.dy === 'number') {
-      if (baseAnim === 'swing' && currentAnim === 'swing') {
-        const L = Math.max(1, ropeSegLen * ropeCfg.segs);
-        swingV += (m.dx / L) * 0.2;
-        wakeRope();
-      } else {
-        nudgeRope(m.dx * 0.6, m.dy * 0.4);
-      }
+    if (!m || typeof m.dx !== 'number' || typeof m.dy !== 'number') return;
+    /* While dragging, the drag spring already drives the swing; injecting the
+       cursor-polled window deltas on top of it would push and pull the same
+       state from two sources and make the pet shiver. */
+    if (isDragging) return;
+    if (baseAnim === 'swing' && currentAnim === 'swing') {
+      const L = Math.max(1, ropeSegLen * ropeCfg.segs);
+      /* Gentle impulse for programmatic glides (Reset Position, presets): the
+         moving anchor carries the pendulum along naturally without whipping it. */
+      swingV += (m.dx / L) * 0.05;
+      if (swingV > 3.5) swingV = 3.5;
+      else if (swingV < -3.5) swingV = -3.5;
+      wakeRope();
     }
   });
   api.on('rope-style', applyRopeStyle);
