@@ -5,11 +5,11 @@
   "description": "RD Luckly Dangle - floating desktop pet for Windows",
   "main": "main.js",
   "author": "RD Luckly Dangle",
-  "scripts": {
-    "start": "electron .",
-    "build": "electron-builder --win nsis",
-    "build:portable": "electron-builder --win portable"
-  },
+"scripts": {
+  "start": "electron .",
+  "build": "electron-builder --win nsis --publish never",
+  "build:portable": "electron-builder --win portable --publish never"
+},
   "devDependencies": {
     "electron": "^38.0.0",
     "electron-builder": "^26.15.3"
