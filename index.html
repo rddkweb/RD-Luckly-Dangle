@@ -1,0 +1,1209 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RD Luckly Dangle - Settings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    color: #e8e8f0;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
+  .header {
+    padding: 28px 28px 16px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ff6b6b, #feca57, #48dbfb, #ff9ff3);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+  .header p { color: #8e8ea0; font-size: 13px; }
+
+  .section {
+    padding: 18px 28px;
+  }
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #6c6c80;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+
+  .card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 14px;
+    backdrop-filter: blur(10px);
+    transition: border-color 0.3s;
+  }
+  .card:hover { border-color: rgba(255,255,255,0.15); }
+
+  .drop-zone {
+    border: 2px dashed rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: #48dbfb;
+    background: rgba(72, 219, 251, 0.08);
+  }
+  .drop-zone.dragover { transform: scale(1.02); }
+  .drop-zone .icon { font-size: 36px; margin-bottom: 8px; }
+  .drop-zone .label { font-size: 14px; color: #c0c0d0; }
+  .drop-zone .formats {
+    font-size: 11px;
+    color: #6c6c80;
+    margin-top: 8px;
+  }
+  .drop-zone input { display: none; }
+
+  .preview-box {
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 14px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .preview-box img, .preview-box svg {
+    max-height: 100px;
+    max-width: 200px;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3));
+  }
+  .preview-box .empty { color: #4a4a60; font-size: 13px; }
+
+  .presets-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .preset-btn {
+    background: rgba(255,255,255,0.06);
+    border: 2px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 12px 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #e8e8f0;
+  }
+  .preset-btn:hover {
+    border-color: #48dbfb;
+    background: rgba(72,219,251,0.1);
+    transform: translateY(-2px);
+  }
+  .preset-btn.active {
+    border-color: #ff6b6b;
+    background: rgba(255,107,107,0.12);
+  }
+  .preset-btn .emoji { font-size: 28px; display: block; margin-bottom: 4px; }
+  .preset-btn .name { font-size: 10px; color: #8e8ea0; }
+
+  .anim-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .anim-btn {
+    background: rgba(255,255,255,0.06);
+    border: 2px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #e8e8f0;
+    font-size: 13px;
+  }
+  .anim-btn:hover {
+    border-color: #feca57;
+    background: rgba(254,202,87,0.1);
+  }
+  .anim-btn.active {
+    border-color: #feca57;
+    background: rgba(254,202,87,0.15);
+    color: #feca57;
+  }
+  .anim-btn .anim-icon { font-size: 20px; display: block; margin-bottom: 2px; }
+
+  .mood-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .mood-btn {
+    background: rgba(255,255,255,0.06);
+    border: 2px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 13px;
+    color: #e8e8f0;
+  }
+  .mood-btn:hover { border-color: #ff9ff3; background: rgba(255,159,243,0.1); }
+  .mood-btn.active { border-color: #ff9ff3; background: rgba(255,159,243,0.15); }
+
+  label.slider-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 8px;
+    color: #c0c0d0;
+  }
+  label.slider-label span { color: #48dbfb; font-weight: 700; }
+  input[type=range] {
+    width: 100%;
+    -webkit-appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.12);
+    outline: none;
+    margin-bottom: 14px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #48dbfb, #0abde3);
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(72,219,251,0.4);
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    flex: 1;
+    min-width: 120px;
+    border: 0;
+    border-radius: 10px;
+    padding: 11px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #48dbfb, #0abde3);
+    color: #0f0c29;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(72,219,251,0.3); }
+  .btn-secondary {
+    background: rgba(255,255,255,0.08);
+    color: #e8e8f0;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .btn-secondary:hover { background: rgba(255,255,255,0.14); }
+  .btn-secondary.active {
+    background: rgba(254,202,87,0.2);
+    color: #feca57;
+    border-color: #feca57;
+  }
+  .btn-danger {
+    background: rgba(255,71,87,0.15);
+    color: #ff4757;
+    border: 1px solid rgba(255,71,87,0.3);
+  }
+  .btn-danger:hover { background: rgba(255,71,87,0.25); }
+
+  /* --- Options list --- */
+  .option-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .option-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 12px 14px;
+    transition: border-color 0.2s;
+  }
+  .option-item:hover { border-color: rgba(255,255,255,0.14); }
+  .option-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .option-icon {
+    font-size: 22px;
+    width: 40px; height: 40px;
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .option-copy b {
+    display: block;
+    font-size: 13px;
+    color: #e8e8f0;
+    margin-bottom: 2px;
+  }
+  .option-copy span {
+    display: block;
+    font-size: 11px;
+    color: #8e8ea0;
+    line-height: 1.4;
+  }
+  .pos-controls {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pos-presets {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+  }
+  .pos-btn {
+    min-width: 46px;
+    padding: 8px 10px;
+    font-size: 15px;
+    line-height: 1;
+  }
+  .pos-custom {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+  }
+  .pos-input {
+    width: 72px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px;
+    color: #e8e8f0;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .pos-input::placeholder { color: #6d6d80; }
+  .pos-input:focus { outline: none; border-color: #48dbfb; }
+  .pos-label { font-size: 11px; color: #8e8ea0; }
+  .rope-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .rope-swatch {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.14);
+    cursor: pointer;
+    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  }
+  .rope-swatch:hover { transform: scale(1.12); border-color: rgba(255,255,255,0.4); }
+  .rope-swatch.active { border-color: #48dbfb; box-shadow: 0 0 0 2px rgba(72,219,251,0.35); }
+  .rope-swatch.custom-swatch {
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    color: rgba(255,255,255,0.9);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
+  .rope-swatch.custom-swatch input {
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    top: -50%;
+    left: -50%;
+    opacity: 0;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+  }
+  .rope-textures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tex-btn.active {
+    border-color: #48dbfb !important;
+    color: #48dbfb !important;
+    background: rgba(72,219,251,0.12) !important;
+  }
+  .rope-len-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .rope-len-row input[type=range] { flex: 1; margin-bottom: 0; }
+  .rope-len-btn {
+    flex: 0 0 auto;
+    min-width: 42px;
+    width: 42px;
+    padding: 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  @media (max-width: 560px) {
+    .option-item { flex-direction: column; align-items: stretch; }
+    .option-item .btn { width: 100%; }
+    .section { padding: 14px 16px; }
+    .card { padding: 16px; }
+    .header { padding: 20px 16px 12px; }
+    .header h1 { font-size: 22px; }
+    .pos-presets { flex-wrap: wrap; }
+    .pos-custom { flex-wrap: wrap; }
+    .rope-textures { justify-content: center; }
+  }
+  @media (max-height: 660px) {
+    .header { padding: 16px 20px 10px; }
+    .header h1 { font-size: 22px; }
+    .section { padding: 12px 20px; }
+    .card { margin-bottom: 10px; }
+    .footer { padding: 12px 20px 16px; }
+  }
+
+  .info-bar {
+    background: rgba(72,219,251,0.08);
+    border: 1px solid rgba(72,219,251,0.2);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #8e8ea0;
+    line-height: 1.5;
+  }
+  .info-bar b { color: #48dbfb; }
+
+  .interactions-help {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .interaction-item {
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .interaction-item .action { color: #feca57; font-weight: 600; }
+  .interaction-item .result { color: #6c6c80; margin-top: 2px; }
+
+  .footer {
+    text-align: center;
+    padding: 20px 28px 30px;
+    color: #4a4a60;
+    font-size: 11px;
+  }
+  .footer a { color: #48dbfb; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>RD Luckly Dangle</h1>
+  <p>Your desktop companion, always hanging around</p>
+</div>
+
+<!-- UPLOAD -->
+<div class="section">
+  <div class="section-title">Character</div>
+  <div class="card">
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">🎨</div>
+      <div class="label">Drop your character here or <b>click to browse</b></div>
+      <div class="formats">SVG, PNG, JPG, JPEG, GIF, WebP, BMP, ICO, APNG, AVIF</div>
+      <input type="file" id="fileInput" accept=".svg,.png,.jpg,.jpeg,.gif,.webp,.bmp,.ico,.apng,.avif,image/svg+xml,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/x-icon,image/apng,image/avif">
+    </div>
+    <div class="preview-box" id="preview">
+      <span class="empty">No character selected</span>
+    </div>
+    <div class="btn-row" style="margin-top: 14px;">
+      <button class="btn btn-primary" id="applyBtn">Apply Character</button>
+    </div>
+  </div>
+
+  <!-- Presets -->
+  <div class="card">
+    <div class="section-title" style="margin-top:0">Built-in Characters</div>
+    <div class="presets-grid" id="presetsGrid">
+      <div class="preset-btn" data-preset="cat">
+        <span class="emoji">🐱</span>
+        <span class="name">Kitty</span>
+      </div>
+      <div class="preset-btn" data-preset="dog">
+        <span class="emoji">🐶</span>
+        <span class="name">Doggo</span>
+      </div>
+      <div class="preset-btn" data-preset="bunny">
+        <span class="emoji">🐰</span>
+        <span class="name">Bunny</span>
+      </div>
+      <div class="preset-btn" data-preset="bear">
+        <span class="emoji">🐻</span>
+        <span class="name">Bear</span>
+      </div>
+      <div class="preset-btn" data-preset="penguin">
+        <span class="emoji">🐧</span>
+        <span class="name">Penguin</span>
+      </div>
+      <div class="preset-btn" data-preset="owl">
+        <span class="emoji">🦉</span>
+        <span class="name">Owl</span>
+      </div>
+      <div class="preset-btn" data-preset="frog">
+        <span class="emoji">🐸</span>
+        <span class="name">Frog</span>
+      </div>
+      <div class="preset-btn" data-preset="ghost">
+        <span class="emoji">👻</span>
+        <span class="name">Ghost</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ANIMATION -->
+<div class="section">
+  <div class="section-title">Animation</div>
+  <div class="card">
+    <div class="anim-grid" id="animGrid">
+      <div class="anim-btn active" data-anim="swing"><span class="anim-icon">🪀</span>Swing</div>
+      <div class="anim-btn" data-anim="bounce"><span class="anim-icon">🏀</span>Bounce</div>
+      <div class="anim-btn" data-anim="float"><span class="anim-icon">🎈</span>Float</div>
+      <div class="anim-btn" data-anim="pulse"><span class="anim-icon">💓</span>Pulse</div>
+      <div class="anim-btn" data-anim="wiggle"><span class="anim-icon">🪱</span>Wiggle</div>
+      <div class="anim-btn" data-anim="nod"><span class="anim-icon">😊</span>Nod</div>
+      <div class="anim-btn" data-anim="spin"><span class="anim-icon">🌀</span>Spin</div>
+      <div class="anim-btn" data-anim="wobble"><span class="anim-icon">🍮</span>Wobble</div>
+    </div>
+
+    <label class="slider-label" style="margin-top: 16px;">Speed <span id="speedVal">1.0x</span></label>
+    <input type="range" id="speed" min="0.2" max="3" step="0.1" value="1">
+
+    <label class="slider-label">Size <span id="sizeVal">140px</span></label>
+    <input type="range" id="size" min="60" max="300" value="140">
+  </div>
+</div>
+
+<!-- MOOD -->
+<div class="section">
+  <div class="section-title">Mood</div>
+  <div class="card">
+    <div class="mood-grid" id="moodGrid">
+      <div class="mood-btn active" data-mood="happy">😊 Happy</div>
+      <div class="mood-btn" data-mood="excited">🤩 Excited</div>
+      <div class="mood-btn" data-mood="sleepy">😴 Sleepy</div>
+      <div class="mood-btn" data-mood="love">😍 Love</div>
+      <div class="mood-btn" data-mood="silly">😜 Silly</div>
+      <div class="mood-btn" data-mood="cool">😎 Cool</div>
+      <div class="mood-btn" data-mood="hungry">🍔 Hungry</div>
+      <div class="mood-btn" data-mood="angry">😤 Angry</div>
+      <div class="mood-btn" data-mood="confused">🤔 Confused</div>
+      <div class="mood-btn" data-mood="dancing">💃 Dancing</div>
+    </div>
+  </div>
+</div>
+
+<!-- ROPE -->
+<div class="section">
+  <div class="section-title">Rope</div>
+  <div class="card">
+    <label class="slider-label">Color</label>
+    <div class="rope-swatches" id="ropeColors">
+      <button class="rope-swatch active" data-color="brown" title="Classic brown" style="background:linear-gradient(135deg,#cfa36a,#9e6b38);"></button>
+      <button class="rope-swatch" data-color="tan" title="Sand tan" style="background:linear-gradient(135deg,#e6c48c,#b4874e);"></button>
+      <button class="rope-swatch" data-color="blonde" title="Blonde" style="background:linear-gradient(135deg,#ecd9a8,#c9b079);"></button>
+      <button class="rope-swatch" data-color="crimson" title="Crimson" style="background:linear-gradient(135deg,#c25b5b,#8a3a3a);"></button>
+      <button class="rope-swatch" data-color="teal" title="Sea teal" style="background:linear-gradient(135deg,#5bb8a8,#3a7d72);"></button>
+      <button class="rope-swatch" data-color="cobalt" title="Cobalt" style="background:linear-gradient(135deg,#6b7fc2,#46599b);"></button>
+      <label class="rope-swatch custom-swatch" id="customColorWrap" title="Custom color" style="background:conic-gradient(from 0deg, #ff6b6b, #feca57, #1dd1a1, #48dbfb, #a29bfe, #ff6b6b);">🎨
+        <input type="color" id="ropeCustomColor" value="#cfa36a" aria-label="Custom rope color">
+      </label>
+    </div>
+    <label class="slider-label" style="margin-top:16px;">Texture</label>
+    <div class="rope-textures" id="ropeTextures">
+      <button class="btn btn-secondary tex-btn active" data-tex="braid">Braided</button>
+      <button class="btn btn-secondary tex-btn" data-tex="cord">Cord</button>
+      <button class="btn btn-secondary tex-btn" data-tex="twist">Twist</button>
+      <button class="btn btn-secondary tex-btn" data-tex="ribbon">Ribbon</button>
+    </div>
+    <label class="slider-label" style="margin-top:16px;">Rope Length <span id="ropeLenVal">100%</span></label>
+    <div class="rope-len-row">
+      <button class="btn btn-secondary rope-len-btn" id="ropeLenMinus" title="Shorter rope">−</button>
+      <input type="range" id="ropeLen" min="50" max="150" step="5" value="100">
+      <button class="btn btn-secondary rope-len-btn" id="ropeLenPlus" title="Longer rope">+</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPTIONS -->
+<div class="section">
+  <div class="section-title">Options</div>
+  <div class="card">
+    <div class="option-list">
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🖱️</div>
+          <div class="option-copy">
+            <b>Click-Through</b>
+            <span>Clicks pass through to other apps. Hover the pet to grab it. Right-click the pet or the tray icon to toggle. Stays on after restart.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="clickthroughBtn" style="flex:0 0 auto; min-width:170px;">Enable Click-Through</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🔓</div>
+          <div class="option-copy">
+            <b>Unlock Position</b>
+            <span>Locked by default — the anchor stays put. Unlock to drag the pet to a new spot, then lock it again.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="posLockBtn" style="flex:0 0 auto; min-width:170px;">Unlock Position</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🌑</div>
+          <div class="option-copy">
+            <b>Ground Shadow</b>
+            <span>Soft shadow beneath the pet. Turn off for a clean floating look.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="shadowBtn" style="flex:0 0 auto; min-width:170px;">Hide Shadow</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🎯</div>
+          <div class="option-copy">
+            <b>Reset Position</b>
+            <span>Move pet back to the top-right of your screen.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="resetPosBtn" style="flex:0 0 auto; min-width:170px;">Reset Position</button>
+      </div>
+      <div class="option-item" style="flex-direction:column; align-items:stretch;">
+        <div class="option-info">
+          <div class="option-icon">📍</div>
+          <div class="option-copy">
+            <b>Pet Position</b>
+            <span>Snap the pet to a screen corner or type exact X / Y.</span>
+          </div>
+        </div>
+        <div class="pos-controls">
+          <div class="pos-presets">
+            <button class="btn btn-secondary pos-btn" data-mode="top-left" title="Top-left corner">⬉</button>
+            <button class="btn btn-secondary pos-btn" data-mode="top-right" title="Top-right corner">⬈</button>
+            <button class="btn btn-secondary pos-btn" data-mode="bottom-left" title="Bottom-left corner">⬋</button>
+            <button class="btn btn-secondary pos-btn" data-mode="bottom-right" title="Bottom-right corner">⬊</button>
+            <button class="btn btn-secondary pos-btn" data-mode="center" title="Center screen">◎</button>
+          </div>
+          <div class="pos-custom">
+            <input type="number" id="posX" class="pos-input" min="0" placeholder="X">
+            <input type="number" id="posY" class="pos-input" min="0" placeholder="Y">
+            <button class="btn btn-secondary" id="applyPosBtn">Set</button>
+          </div>
+        </div>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">⚡</div>
+          <div class="option-copy">
+            <b>Start with Windows</b>
+            <span>Launch automatically when you sign in — the pet is always hanging around.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="autostartBtn" style="flex:0 0 auto; min-width:170px;">Enabled</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🙈</div>
+          <div class="option-copy">
+            <b>Show / Hide</b>
+            <span>Hide the pet or bring it back from the tray.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="showPetBtn" style="flex:0 0 auto; min-width:170px;">Hide Pet</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🚪</div>
+          <div class="option-copy">
+            <b>Exit RD Luckly Dangle</b>
+            <span>Close the app completely.</span>
+          </div>
+        </div>
+        <button class="btn btn-danger" id="quitBtn" style="flex:0 0 auto; min-width:170px;">Exit RD Luckly Dangle</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- WINDOW CONTROL GUIDE -->
+<div class="section">
+  <div class="section-title">Pet Window Controls</div>
+  <div class="card">
+    <div class="interactions-help">
+      <div class="interaction-item">
+        <div class="action">Right-click pet</div>
+        <div class="result">Full menu: settings, click-through, position, quit</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">🖱 Toggle</div>
+        <div class="result">Quick click-through switch on the pet's control bar</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">─ Minimize</div>
+        <div class="result">Sends pet to tray (click tray icon to return)</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">⚙ Settings</div>
+        <div class="result">Opens this settings panel</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">✕ Close</div>
+        <div class="result">Quits RD Luckly Dangle</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">💡 Re-launch</div>
+        <div class="result">Only one pet instance — never duplicates</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- INTERACTIONS HELP -->
+<div class="section">
+  <div class="section-title">Interactions</div>
+  <div class="card">
+    <div class="info-bar">
+      <b>Tip:</b> Unlock Position below (or right-click the pet → Unlock Position), then drag the pet anywhere. While locked, dragging just tugs it on the rope!
+    </div>
+    <div class="interactions-help" style="margin-top: 12px;">
+      <div class="interaction-item">
+        <div class="action">Click pet</div>
+        <div class="result">Random reaction + particles</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">Double-click</div>
+        <div class="result">Excited spin + stars</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">Right-click</div>
+        <div class="result">Menu: unlock, click-through, more</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">Drag (locked)</div>
+        <div class="result">Tug &amp; swing on the rope</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">Drag (unlocked)</div>
+        <div class="result">Move the pet anywhere</div>
+      </div>
+      <div class="interaction-item">
+        <div class="action">Hover</div>
+        <div class="result">Brighten the pet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">RD Luckly Dangle v2.1 &mdash; Made with love</div>
+
+<script>
+(function() {
+  // --- Elements ---
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const preview = document.getElementById('preview');
+  const applyBtn = document.getElementById('applyBtn');
+  const speedSlider = document.getElementById('speed');
+  const sizeSlider = document.getElementById('size');
+  const speedVal = document.getElementById('speedVal');
+  const sizeVal = document.getElementById('sizeVal');
+  const ropeLenSlider = document.getElementById('ropeLen');
+  const ropeLenVal = document.getElementById('ropeLenVal');
+  const ropeLenMinus = document.getElementById('ropeLenMinus');
+  const ropeLenPlus = document.getElementById('ropeLenPlus');
+  const clickthroughBtn = document.getElementById('clickthroughBtn');
+  const posLockBtn = document.getElementById('posLockBtn');
+  const shadowBtn = document.getElementById('shadowBtn');
+  const autostartBtn = document.getElementById('autostartBtn');
+  const resetPosBtn = document.getElementById('resetPosBtn');
+  const showPetBtn = document.getElementById('showPetBtn');
+  const quitBtn = document.getElementById('quitBtn');
+  const animGrid = document.getElementById('animGrid');
+  const moodGrid = document.getElementById('moodGrid');
+  const presetsGrid = document.getElementById('presetsGrid');
+
+  let currentImageData = null;
+  let clickThrough = false;
+
+  // --- Built-in Preset SVGs ---
+  const presets = {
+    cat: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <ellipse cx="0" cy="5" rx="28" ry="30" fill="#FF9F43"/>
+        <ellipse cx="-12" cy="-22" rx="10" ry="16" fill="#FF9F43"/>
+        <ellipse cx="-12" cy="-24" rx="6" ry="10" fill="#FDA7DF"/>
+        <ellipse cx="12" cy="-22" rx="10" ry="16" fill="#FF9F43"/>
+        <ellipse cx="12" cy="-24" rx="6" ry="10" fill="#FDA7DF"/>
+        <circle cx="-10" cy="-4" r="5" fill="#222"/>
+        <circle cx="10" cy="-4" r="5" fill="#222"/>
+        <circle cx="-8" cy="-5" r="2" fill="white"/>
+        <circle cx="12" cy="-5" r="2" fill="white"/>
+        <ellipse cx="0" cy="3" rx="3" ry="2" fill="#FDA7DF"/>
+        <line x1="-6" y1="6" x2="-25" y2="2" stroke="#FF9F43" stroke-width="1.5"/>
+        <line x1="-6" y1="8" x2="-25" y2="8" stroke="#FF9F43" stroke-width="1.5"/>
+        <line x1="6" y1="6" x2="25" y2="2" stroke="#FF9F43" stroke-width="1.5"/>
+        <line x1="6" y1="8" x2="25" y2="8" stroke="#FF9F43" stroke-width="1.5"/>
+        <path d="M-5,8 Q0,14 5,8" fill="none" stroke="#222" stroke-width="1.5"/>
+        <ellipse cx="0" cy="35" rx="6" ry="4" fill="#FF9F43"/>
+        <path d="M-6,35 Q-6,45 -10,48" fill="none" stroke="#FF9F43" stroke-width="4" stroke-linecap="round"/>
+        <path d="M6,35 Q6,45 10,48" fill="none" stroke="#FF9F43" stroke-width="4" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    dog: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <ellipse cx="0" cy="5" rx="30" ry="30" fill="#C0A882"/>
+        <ellipse cx="-20" cy="-15" rx="10" ry="18" fill="#8B7355" transform="rotate(-15,-20,-15)"/>
+        <ellipse cx="20" cy="-15" rx="10" ry="18" fill="#8B7355" transform="rotate(15,20,-15)"/>
+        <circle cx="-10" cy="-4" r="5" fill="#222"/>
+        <circle cx="10" cy="-4" r="5" fill="#222"/>
+        <circle cx="-8" cy="-5" r="2" fill="white"/>
+        <circle cx="12" cy="-5" r="2" fill="white"/>
+        <ellipse cx="0" cy="5" rx="8" ry="6" fill="#8B7355"/>
+        <ellipse cx="0" cy="4" rx="4" ry="3" fill="#222"/>
+        <path d="M-4,9 Q0,14 4,9" fill="none" stroke="#222" stroke-width="1.5"/>
+        <ellipse cx="-12" cy="2" rx="6" ry="3" fill="#FDA7DF" opacity="0.5"/>
+        <ellipse cx="12" cy="2" rx="6" ry="3" fill="#FDA7DF" opacity="0.5"/>
+        <ellipse cx="0" cy="35" rx="6" ry="4" fill="#C0A882"/>
+        <path d="M-6,35 Q-6,45 -10,48" fill="none" stroke="#C0A882" stroke-width="4" stroke-linecap="round"/>
+        <path d="M6,35 Q6,45 10,48" fill="none" stroke="#C0A882" stroke-width="4" stroke-linecap="round"/>
+        <path d="M25,5 Q35,0 30,10" fill="none" stroke="#8B7355" stroke-width="4" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    bunny: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,58)">
+        <ellipse cx="0" cy="5" rx="26" ry="28" fill="#F8F8F8"/>
+        <ellipse cx="-10" cy="-30" rx="7" ry="22" fill="#F8F8F8"/>
+        <ellipse cx="-10" cy="-30" rx="4" ry="16" fill="#FDA7DF"/>
+        <ellipse cx="10" cy="-30" rx="7" ry="22" fill="#F8F8F8"/>
+        <ellipse cx="10" cy="-30" rx="4" ry="16" fill="#FDA7DF"/>
+        <circle cx="-8" cy="-2" r="4" fill="#222"/>
+        <circle cx="8" cy="-2" r="4" fill="#222"/>
+        <circle cx="-6" cy="-3" r="1.5" fill="white"/>
+        <circle cx="10" cy="-3" r="1.5" fill="white"/>
+        <ellipse cx="0" cy="5" rx="3" ry="2" fill="#FDA7DF"/>
+        <path d="M-3,8 Q0,12 3,8" fill="none" stroke="#222" stroke-width="1.2"/>
+        <ellipse cx="-14" cy="4" rx="5" ry="3" fill="#FDA7DF" opacity="0.4"/>
+        <ellipse cx="14" cy="4" rx="5" ry="3" fill="#FDA7DF" opacity="0.4"/>
+        <circle cx="0" cy="33" r="5" fill="#F8F8F8"/>
+        <path d="M-5,33 Q-5,42 -8,45" fill="none" stroke="#F8F8F8" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M5,33 Q5,42 8,45" fill="none" stroke="#F8F8F8" stroke-width="3.5" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    bear: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <circle cx="-18" cy="-22" r="12" fill="#8B6914"/>
+        <circle cx="-18" cy="-22" r="7" fill="#C49A2A"/>
+        <circle cx="18" cy="-22" r="12" fill="#8B6914"/>
+        <circle cx="18" cy="-22" r="7" fill="#C49A2A"/>
+        <circle cx="0" cy="0" r="32" fill="#8B6914"/>
+        <circle cx="0" cy="-2" r="12" fill="#C49A2A"/>
+        <circle cx="-10" cy="-8" r="4" fill="#222"/>
+        <circle cx="10" cy="-8" r="4" fill="#222"/>
+        <circle cx="-8" cy="-9" r="1.5" fill="white"/>
+        <circle cx="12" cy="-9" r="1.5" fill="white"/>
+        <ellipse cx="0" cy="0" rx="5" ry="4" fill="#222"/>
+        <path d="M-4,5 Q0,10 4,5" fill="none" stroke="#222" stroke-width="1.5"/>
+        <ellipse cx="0" cy="35" rx="7" ry="5" fill="#8B6914"/>
+        <path d="M-7,35 Q-7,45 -11,48" fill="none" stroke="#8B6914" stroke-width="5" stroke-linecap="round"/>
+        <path d="M7,35 Q7,45 11,48" fill="none" stroke="#8B6914" stroke-width="5" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    penguin: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <ellipse cx="0" cy="0" rx="28" ry="34" fill="#2C3E50"/>
+        <ellipse cx="0" cy="5" rx="20" ry="26" fill="#ECF0F1"/>
+        <circle cx="-9" cy="-8" r="5" fill="white"/>
+        <circle cx="9" cy="-8" r="5" fill="white"/>
+        <circle cx="-9" cy="-8" r="3" fill="#222"/>
+        <circle cx="9" cy="-8" r="3" fill="#222"/>
+        <circle cx="-7.5" cy="-9" r="1.2" fill="white"/>
+        <circle cx="10.5" cy="-9" r="1.2" fill="white"/>
+        <ellipse cx="0" cy="2" rx="4" ry="3" fill="#E67E22"/>
+        <ellipse cx="-18" cy="5" rx="5" ry="14" fill="#2C3E50" transform="rotate(-10,-18,5)"/>
+        <ellipse cx="18" cy="5" rx="5" ry="14" fill="#2C3E50" transform="rotate(10,18,5)"/>
+        <ellipse cx="-8" cy="35" rx="8" ry="4" fill="#E67E22"/>
+        <ellipse cx="8" cy="35" rx="8" ry="4" fill="#E67E22"/>
+      </g>
+    </svg>`,
+    owl: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <ellipse cx="-12" cy="-25" rx="10" ry="14" fill="#8B6914"/>
+        <ellipse cx="12" cy="-25" rx="10" ry="14" fill="#8B6914"/>
+        <circle cx="0" cy="0" r="30" fill="#C49A2A"/>
+        <circle cx="-12" cy="-5" r="12" fill="#FFF8DC"/>
+        <circle cx="12" cy="-5" r="12" fill="#FFF8DC"/>
+        <circle cx="-12" cy="-5" r="6" fill="#222"/>
+        <circle cx="12" cy="-5" r="6" fill="#222"/>
+        <circle cx="-10" cy="-6" r="2" fill="white"/>
+        <circle cx="14" cy="-6" r="2" fill="white"/>
+        <polygon points="0,2 -4,8 4,8" fill="#E67E22"/>
+        <path d="M-20,8 Q-15,15 -10,8" fill="none" stroke="#C49A2A" stroke-width="2"/>
+        <path d="M20,8 Q15,15 10,8" fill="none" stroke="#C49A2A" stroke-width="2"/>
+        <ellipse cx="-22" cy="5" rx="7" ry="14" fill="#8B6914" transform="rotate(-10,-22,5)"/>
+        <ellipse cx="22" cy="5" rx="7" ry="14" fill="#8B6914" transform="rotate(10,22,5)"/>
+        <ellipse cx="0" cy="34" rx="6" ry="4" fill="#E67E22"/>
+        <path d="M-6,34 Q-6,44 -10,47" fill="none" stroke="#E67E22" stroke-width="3" stroke-linecap="round"/>
+        <path d="M6,34 Q6,44 10,47" fill="none" stroke="#E67E22" stroke-width="3" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    frog: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,55)">
+        <circle cx="-14" cy="-20" r="14" fill="#27AE60"/>
+        <circle cx="14" cy="-20" r="14" fill="#27AE60"/>
+        <circle cx="-14" cy="-22" r="7" fill="white"/>
+        <circle cx="14" cy="-22" r="7" fill="white"/>
+        <circle cx="-14" cy="-22" r="4" fill="#222"/>
+        <circle cx="14" cy="-22" r="4" fill="#222"/>
+        <circle cx="-12" cy="-23" r="1.5" fill="white"/>
+        <circle cx="16" cy="-23" r="1.5" fill="white"/>
+        <ellipse cx="0" cy="5" rx="30" ry="25" fill="#27AE60"/>
+        <path d="M-15,0 Q0,10 15,0" fill="none" stroke="#1E8449" stroke-width="2.5"/>
+        <circle cx="-22" cy="5" r="8" fill="#2ECC71"/>
+        <circle cx="22" cy="5" r="8" fill="#2ECC71"/>
+        <ellipse cx="0" cy="32" rx="6" ry="4" fill="#27AE60"/>
+        <path d="M-6,32 Q-6,42 -9,45" fill="none" stroke="#27AE60" stroke-width="4" stroke-linecap="round"/>
+        <path d="M6,32 Q6,42 9,45" fill="none" stroke="#27AE60" stroke-width="4" stroke-linecap="round"/>
+      </g>
+    </svg>`,
+    ghost: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <g transform="translate(50,50)">
+        <path d="M-25,-15 Q-25,-38 0,-38 Q25,-38 25,-15 L25,25 Q20,18 15,25 Q10,18 5,25 Q0,18 -5,25 Q-10,18 -15,25 Q-20,18 -25,25 Z" fill="#ECF0F1" stroke="#BDC3C7" stroke-width="1"/>
+        <circle cx="-10" cy="-15" r="5" fill="#222"/>
+        <circle cx="10" cy="-15" r="5" fill="#222"/>
+        <circle cx="-8" cy="-16" r="2" fill="white"/>
+        <circle cx="12" cy="-16" r="2" fill="white"/>
+        <ellipse cx="0" cy="-5" rx="5" ry="6" fill="#BDC3C7"/>
+        <ellipse cx="-12" cy="-5" rx="5" ry="3" fill="#FDA7DF" opacity="0.4"/>
+        <ellipse cx="12" cy="-5" rx="5" ry="3" fill="#FDA7DF" opacity="0.4"/>
+      </g>
+    </svg>`
+  };
+
+  // --- File Handling ---
+  const acceptExts = ['.svg','.png','.jpg','.jpeg','.gif','.webp','.bmp','.ico','.apng','.avif'];
+
+  function isSupported(name) {
+    const lower = name.toLowerCase();
+    return acceptExts.some(ext => lower.endsWith(ext));
+  }
+
+  function loadFile(file) {
+    if (!file) return;
+    if (!isSupported(file.name)) {
+      alert('Unsupported format. Please use: SVG, PNG, JPG, GIF, WebP, BMP, ICO, APNG, or AVIF');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      currentImageData = reader.result;
+      showPreview(reader.result);
+    };
+
+    if (file.name.toLowerCase().endsWith('.svg')) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function showPreview(data) {
+    preview.innerHTML = '';
+    const d = typeof data === 'string' ? data.trim() : '';
+    const svgPos = d.indexOf('<svg');
+    if (svgPos !== -1 && svgPos < 400 && !d.startsWith('data:')) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = d;
+      const svgEl = wrapper.querySelector('svg');
+      if (svgEl) {
+        svgEl.style.maxHeight = '100px';
+        svgEl.style.maxWidth = '200px';
+        svgEl.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))';
+        preview.appendChild(svgEl);
+      }
+    } else {
+      const img = document.createElement('img');
+      img.src = data;
+      img.style.maxHeight = '100px';
+      img.style.maxWidth = '200px';
+      img.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))';
+      preview.appendChild(img);
+    }
+  }
+
+  dropZone.onclick = () => fileInput.click();
+  dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+  dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+  dropZone.ondrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    loadFile(e.dataTransfer.files[0]);
+  };
+  fileInput.onchange = (e) => loadFile(e.target.files[0]);
+
+  // --- Apply ---
+  applyBtn.onclick = () => {
+    if (!currentImageData) return alert('Upload or select a character first!');
+    api.send('set-pet-image', currentImageData);
+  };
+
+  // --- Presets ---
+  presetsGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.preset-btn');
+    if (!btn) return;
+    const key = btn.dataset.preset;
+    const svg = presets[key];
+    if (!svg) return;
+
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    currentImageData = svg;
+    showPreview(svg);
+    api.send('set-pet-image', svg);
+  });
+
+  // --- Animation ---
+  animGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.anim-btn');
+    if (!btn) return;
+    document.querySelectorAll('.anim-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    api.send('set-animation', btn.dataset.anim);
+  });
+
+  // --- Speed ---
+  speedSlider.oninput = () => {
+    const v = parseFloat(speedSlider.value);
+    speedVal.textContent = v.toFixed(1) + 'x';
+    api.send('set-speed', v);
+  };
+
+  // --- Size ---
+  sizeSlider.oninput = () => {
+    const v = parseInt(sizeSlider.value);
+    sizeVal.textContent = v + 'px';
+    api.send('set-size', v);
+  };
+
+  // --- Rope Length (applies live to the pet; +/- steps by one notch) ---
+  function sendRopeLen(v) {
+    const cv = Math.max(50, Math.min(150, v));
+    ropeLenSlider.value = cv;
+    ropeLenVal.textContent = cv + '%';
+    api.send('set-rope-length', cv);
+  }
+  ropeLenSlider.oninput = () => sendRopeLen(parseInt(ropeLenSlider.value, 10));
+  ropeLenMinus.onclick = () => sendRopeLen(parseInt(ropeLenSlider.value, 10) - 5);
+  ropeLenPlus.onclick = () => sendRopeLen(parseInt(ropeLenSlider.value, 10) + 5);
+
+  // --- Moods ---
+  moodGrid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mood-btn');
+    if (!btn) return;
+    document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    api.send('set-mood', btn.dataset.mood);
+  });
+
+  // --- Rope ---
+  const ropeColors = document.getElementById('ropeColors');
+  const ropeTextures = document.getElementById('ropeTextures');
+  const customColorWrap = document.getElementById('customColorWrap');
+  const ropeCustomColor = document.getElementById('ropeCustomColor');
+  let ropeColor = 'brown';
+  let ropeTexture = 'braid';
+
+  // Marks the matching preset swatch, or the custom swatch for any hex color.
+  function markActiveColor(color) {
+    let presetMatch = false;
+    ropeColors.querySelectorAll('.rope-swatch[data-color]').forEach((b) => {
+      const on = b.dataset.color === color;
+      b.classList.toggle('active', on);
+      if (on) presetMatch = true;
+    });
+    const isCustom = !!color && !presetMatch;
+    customColorWrap.classList.toggle('active', isCustom);
+    if (isCustom && typeof color === 'string' && color.startsWith('#')) {
+      // The <input type=color> control only accepts 6-digit hex.
+      const h = color.slice(1);
+      ropeCustomColor.value = h.length === 3 ? '#' + h.split('').map((c) => c + c).join('') : color;
+    }
+  }
+
+  ropeColors.addEventListener('click', (e) => {
+    const btn = e.target.closest('.rope-swatch[data-color]');
+    if (!btn) return;
+    ropeColor = btn.dataset.color;
+    markActiveColor(ropeColor);
+    api.send('rope-style', { color: ropeColor, texture: ropeTexture });
+  });
+  ropeCustomColor.addEventListener('input', () => {
+    ropeColor = ropeCustomColor.value;
+    markActiveColor(ropeColor);
+    api.send('rope-style', { color: ropeColor, texture: ropeTexture });
+  });
+  ropeTextures.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tex-btn');
+    if (!btn) return;
+    ropeTextures.querySelectorAll('.tex-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    ropeTexture = btn.dataset.tex;
+    api.send('rope-style', { color: ropeColor, texture: ropeTexture });
+  });
+
+  // --- Options ---
+  function updateClickthroughBtn(state) {
+    clickThrough = !!state;
+    clickthroughBtn.textContent = clickThrough ? 'Disable Click-Through' : 'Enable Click-Through';
+    clickthroughBtn.classList.toggle('active', clickThrough);
+  }
+
+  clickthroughBtn.onclick = () => {
+    clickThrough = !clickThrough;
+    api.send('toggle-clickthrough', clickThrough);
+    updateClickthroughBtn(clickThrough);
+  };
+
+  api.invoke('get-clickthrough').then(updateClickthroughBtn);
+
+  // --- Position lock (drag-to-move is opt-in) ---
+  function updatePosLockBtn(unlocked) {
+    posLockBtn.textContent = unlocked ? 'Lock Position' : 'Unlock Position';
+    posLockBtn.classList.toggle('active', !!unlocked);
+  }
+  posLockBtn.onclick = () => {
+    const unlocked = !posLockBtn.classList.contains('active');
+    api.send('set-position-lock', unlocked);
+    updatePosLockBtn(unlocked);
+  };
+  api.invoke('get-position-lock').then(updatePosLockBtn);
+  api.on('position-lock', updatePosLockBtn);
+
+  // --- Ground shadow toggle ---
+  function updateShadowBtn(on) {
+    shadowBtn.textContent = on ? 'Hide Shadow' : 'Show Shadow';
+    shadowBtn.classList.toggle('active', !on);
+  }
+  shadowBtn.onclick = () => {
+    // "active" = currently hidden, so clicking turns it back on.
+    const on = shadowBtn.classList.contains('active');
+    api.send('set-ground-shadow', on);
+    updateShadowBtn(on);
+  };
+  api.invoke('get-ground-shadow').then(updateShadowBtn);
+
+  // --- Start with Windows ---
+  function updateAutoStartBtn(on) {
+    autostartBtn.textContent = on ? 'Enabled' : 'Disabled';
+    autostartBtn.classList.toggle('active', !!on);
+  }
+  autostartBtn.onclick = () => {
+    const on = !autostartBtn.classList.contains('active');
+    api.send('set-autostart', on);
+    updateAutoStartBtn(on);
+  };
+  api.invoke('get-autostart').then(updateAutoStartBtn);
+  api.on('autostart', updateAutoStartBtn);
+
+  resetPosBtn.onclick = () => api.send('reset-position');
+
+  document.querySelectorAll('.pos-btn').forEach((btn) => {
+    btn.onclick = () => api.send('set-position', { mode: btn.dataset.mode });
+  });
+
+  document.getElementById('applyPosBtn').onclick = () => {
+    const x = parseInt(document.getElementById('posX').value, 10);
+    const y = parseInt(document.getElementById('posY').value, 10);
+    if (!isNaN(x) && !isNaN(y)) api.send('set-position', { x, y });
+  };
+
+  showPetBtn.onclick = () => {
+    const hidden = showPetBtn.classList.toggle('active');
+    showPetBtn.textContent = hidden ? 'Show Pet' : 'Hide Pet';
+    api.send(hidden ? 'hide-pet' : 'show-pet');
+  };
+
+  // Keep the Show/Hide button honest when visibility changes elsewhere
+  // (tray menu, pet right-click menu, minimize balloon).
+  api.on('visibility', (v) => {
+    showPetBtn.classList.toggle('active', !v);
+    showPetBtn.textContent = v ? 'Hide Pet' : 'Show Pet';
+  });
+
+  quitBtn.onclick = () => api.send('quit');
+
+  // Keep the panel in sync with the pet (persisted settings restored on start)
+  api.on('size', (v) => {
+    sizeSlider.value = v;
+    sizeVal.textContent = v + 'px';
+  });
+  api.on('speed', (v) => {
+    speedSlider.value = v;
+    speedVal.textContent = parseFloat(v).toFixed(1) + 'x';
+  });
+  api.on('rope-length', (v) => {
+    ropeLenSlider.value = v;
+    ropeLenVal.textContent = v + '%';
+  });
+  api.on('animation', (a) => {
+    document.querySelectorAll('.anim-btn').forEach((b) => b.classList.toggle('active', b.dataset.anim === a));
+  });
+  api.on('mood', (m) => {
+    document.querySelectorAll('.mood-btn').forEach((b) => b.classList.toggle('active', b.dataset.mood === m));
+  });
+  api.on('rope-style', (s) => {
+    if (!s || typeof s !== 'object') return;
+    if (s.color) {
+      ropeColor = s.color;
+      markActiveColor(s.color);
+    }
+    if (s.texture) {
+      ropeTexture = s.texture;
+      ropeTextures.querySelectorAll('.tex-btn').forEach((b) => b.classList.toggle('active', b.dataset.tex === s.texture));
+    }
+  });
+})();
+</script>
+</body>
+</html>

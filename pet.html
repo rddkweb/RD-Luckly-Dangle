@@ -1,0 +1,1226 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    cursor: default;
+    user-select: none;
+    -webkit-app-region: no-drag;
+  }
+
+  #stage {
+    position: relative;
+    width: 100%; height: 100%;
+    transform-origin: top center;
+  }
+
+  .dragging #pet-container,
+  .dragging #rope-wrap {
+    animation-play-state: paused !important;
+  }
+
+  /* --- Window controls (minimize / settings / click-through / close) --- */
+  /* The invisible zone enlarges the hover target for revealing the buttons;
+     the bar itself only accepts clicks while it is actually visible. */
+  #controls-zone {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 220px;
+    height: 92px;
+    z-index: 50;
+  }
+  #controls {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    display: flex;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 20px;
+    background: rgba(20, 20, 30, 0.35);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    transform: translateY(-6px) scale(0.9);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    -webkit-app-region: no-drag;
+    pointer-events: none;
+  }
+  #controls-zone:hover #controls, .controls-visible #controls {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+  .ctl {
+    width: 24px; height: 24px;
+    border: none;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 1;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    transition: transform 0.15s ease, filter 0.15s ease;
+    -webkit-app-region: no-drag;
+  }
+  .ctl:hover { transform: scale(1.18); filter: brightness(1.25); }
+  .ctl:active { transform: scale(0.92); }
+  #btn-min  { background: linear-gradient(135deg, #48dbfb, #0abde3); }
+  #btn-set  { background: linear-gradient(135deg, #feca57, #f39c12); }
+  #btn-ct   { background: linear-gradient(135deg, #a29bfe, #6c5ce7); }
+  #btn-close{ background: linear-gradient(135deg, #ff6b6b, #ff4757); }
+
+  /* Click-through mode: hide controls entirely */
+  body.clickthrough #controls-zone {
+    pointer-events: none;
+  }
+  body.clickthrough #controls {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.9);
+    pointer-events: none;
+  }
+
+  /* --- Rope --- */
+  #stage {
+    --rp1: #cfa36a;
+    --rp2: #9e6b38;
+    --rpk1: #e9c28a;
+    --rpk2: #a9743d;
+    --rpk3: #7a471d;
+  }
+  #rope-wrap {
+    position: absolute;
+    width: 100%;
+    height: 1px;
+    z-index: 2;
+  }
+  #rope-svg {
+    position: absolute;
+    left: 0; top: 0;
+    overflow: visible;
+    pointer-events: none;
+  }
+  #rope-path {
+    stroke: var(--rp1);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+  }
+  #rope-path2 {
+    stroke: var(--rp2);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    stroke-dasharray: 2 4 4 2;
+    opacity: 0.6;
+  }
+  #knot {
+    position: absolute;
+    left: 0; top: 0;
+    width: 14px; height: 11px;
+    margin-left: -7px; margin-top: -5px;
+    background: radial-gradient(circle at 32% 26%, var(--rpk1), var(--rpk2) 60%, var(--rpk3) 100%);
+    border-radius: 50%;
+    box-shadow:
+      0 2px 5px rgba(0,0,0,0.45),
+      inset 0 -1px 2px rgba(80,40,10,0.55),
+      0 1px 0 rgba(255,255,255,0.18);
+  }
+  /* Move mode (position unlocked): the anchor pulses so you can see the exact
+     point that dragging will carry around the screen. */
+  #stage.move-mode #knot { animation: anchor-pulse 1.6s ease-in-out infinite; }
+  @keyframes anchor-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(72,219,251,0.45), 0 0 10px rgba(72,219,251,0.5), 0 2px 5px rgba(0,0,0,0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(72,219,251,0.22), 0 0 22px rgba(72,219,251,0.75), 0 2px 5px rgba(0,0,0,0.45); }
+  }
+  #stage.move-mode #pet-container { cursor: move; }
+  /* Rope textures: same solver credentials as Hangly-style ropes — each one
+     is a different set of values, not just a different picture. */
+  #stage.rope-cord #rope-path2 { display: none; }
+  #stage.rope-cord #rope-path { stroke-width: 3; }
+  #stage.rope-twist #rope-path2 { stroke-dasharray: 1.5 3; opacity: 0.9; }
+  #stage.rope-twist #rope-path { stroke-dasharray: 3 5; opacity: 0.75; }
+  #stage.rope-ribbon #rope-path { stroke-width: 7; }
+  #stage.rope-ribbon #rope-path2 { stroke-width: 5; stroke-dasharray: 10 4; opacity: 0.35; }
+  /* Smooth flash when the rope style changes */
+  @keyframes rope-fx {
+    0%   { filter: brightness(1.7) drop-shadow(0 0 6px rgba(255,255,255,0.5)); }
+    100% { filter: brightness(1) drop-shadow(0 0 0 rgba(255,255,255,0)); }
+  }
+  #stage.rope-swapping #rope-wrap { animation: rope-fx 0.4s ease-out; }
+
+  /* The rig carries the rope-swing transform; the pet animates inside it, so
+     both combine smoothly (rotating on the rope while bouncing, etc.). */
+  #pet-rig {
+    position: absolute;
+    left: 0; top: 0;
+    transform-origin: 50% 0;
+    will-change: transform;
+    backface-visibility: hidden;
+  }
+
+  #pet-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: 50% 0;
+    will-change: transform;
+    backface-visibility: hidden;
+    /* Pointer events drive dragging; never let touch/pen gestures hijack it. */
+    touch-action: none;
+  }
+
+  #pet-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 10px 14px rgba(0,0,0,0.28));
+    transition: filter 0.3s ease;
+    image-rendering: auto;
+    pointer-events: none;
+  }
+  #pet-svg-wrapper {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    filter: drop-shadow(0 10px 14px rgba(0,0,0,0.28));
+    transition: filter 0.3s ease;
+    pointer-events: none;
+  }
+  #pet-svg-wrapper svg {
+    width: 100%; height: 100%;
+    overflow: visible;
+  }
+
+  /* --- Mood bubble --- */
+  #mood-bubble {
+    position: absolute;
+    top: -46px; left: 50%;
+    transform: translateX(-50%) scale(0);
+    background: rgba(255,255,255,0.96);
+    border-radius: 22px;
+    padding: 5px 14px;
+    font-size: 22px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    pointer-events: none;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease;
+    opacity: 0;
+    white-space: nowrap;
+    z-index: 20;
+  }
+  #mood-bubble.show {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+  }
+  #mood-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -8px; left: 50%;
+    transform: translateX(-50%);
+    border: 8px solid transparent;
+    border-top-color: rgba(255,255,255,0.96);
+    border-bottom: 0;
+  }
+
+  /* --- Particles --- */
+  .particle {
+    position: absolute;
+    pointer-events: none;
+    font-size: 18px;
+    z-index: 30;
+    animation: particle-fly 1s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  }
+  @keyframes particle-fly {
+    0% { opacity: 1; transform: translate(0, 0) scale(1); }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.3) rotate(var(--rot)); }
+  }
+
+  /* --- Ground shadow --- */
+  #ground-shadow {
+    position: absolute;
+    bottom: 8px; left: 50%;
+    width: 80px; height: 14px;
+    background: radial-gradient(ellipse, rgba(0,0,0,0.22) 0%, transparent 68%);
+    border-radius: 50%;
+    transition: width 0.3s ease, opacity 0.3s ease;
+  }
+
+  /* --- Animations --- */
+  .anim-bounce #pet-container { animation: bounce var(--dur) cubic-bezier(0.28, 0.84, 0.42, 1) infinite; }
+  .anim-float #pet-container { animation: float var(--dur) ease-in-out infinite; }
+  .anim-pulse #pet-container { animation: pulse var(--dur) ease-in-out infinite; }
+  .anim-wiggle #pet-container { animation: wiggle calc(var(--dur) * 0.3) ease-in-out infinite; }
+  .anim-nod #pet-container { animation: nod var(--dur) ease-in-out infinite; }
+  .anim-spin #pet-container { animation: spin calc(var(--dur) * 1.2) linear infinite; }
+  .anim-wobble #pet-container { animation: wobble var(--dur) ease-in-out infinite; }
+  .anim-shake #pet-container { animation: shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+  .anim-jump #pet-container { animation: jump 0.65s cubic-bezier(0.34, 1.56, 0.64, 1) 1; }
+  .anim-punch #pet-container { animation: punch 0.6s cubic-bezier(0.36, 0.07, 0.19, 0.97) 1; }
+  .anim-confused #pet-container { animation: headtilt 0.9s ease-in-out 1; }
+  .anim-celebrate #pet-container { animation: celebrate 1.1s cubic-bezier(0.34, 1.56, 0.64, 1) 1; }
+  .anim-celebrate #ground-shadow { animation: reboundShadow 1.1s ease-out 1; }
+  .anim-rebound #pet-container { animation: rebound 0.95s cubic-bezier(0.25, 0.46, 0.45, 0.94) 1; }
+  .anim-rebound #ground-shadow { animation: reboundShadow 0.95s ease-out 1; }
+
+  /* Snappy squash "pop" on every click, applied to the whole stage */
+  #stage.pop-stage { animation: pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) 1; }
+  @keyframes pop {
+    0%   { transform: translateY(7px) scale(1.14, 0.86); }
+    45%  { transform: translateY(-5px) scale(0.93, 1.09); }
+    100% { transform: translateY(0) scale(1, 1); }
+  }
+
+  /* Expanding ring burst (celebrations) */
+  .ring {
+    position: absolute;
+    pointer-events: none;
+    width: 22px; height: 22px;
+    border: 3px solid rgba(255, 215, 0, 0.75);
+    border-radius: 50%;
+    z-index: 29;
+    animation: ring-out 0.7s ease-out forwards;
+  }
+  @keyframes ring-out {
+    0% { transform: scale(1); opacity: 0.9; }
+    100% { transform: scale(6); opacity: 0; }
+  }
+
+  /* Physics-driven dangle replaces the cosmetic swing animation */
+  #stage.physics-on .anim-swing #pet-container,
+  #stage.physics-on .anim-swing #ground-shadow {
+    animation: none;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    40% { transform: translateY(-26px) scale(0.98, 1.02); }
+    60% { transform: translateY(-28px) scale(0.96, 1.04); }
+    80% { transform: translateY(-4px) scale(1.04, 0.96); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    33% { transform: translateY(-14px) rotate(2deg); }
+    66% { transform: translateY(-6px) rotate(-1.5deg); }
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.12); }
+  }
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-7deg); }
+    75% { transform: rotate(7deg); }
+  }
+  @keyframes nod {
+    0%, 100% { transform: rotate(0deg); }
+    30% { transform: rotate(14deg); }
+    60% { transform: rotate(-5deg); }
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes rebound {
+    0%   { transform: translateY(0) rotate(0deg) scale(1, 1); }
+    15%  { transform: translateY(-18px) rotate(-5deg) scale(0.97, 1.03); }
+    30%  { transform: translateY(2px) rotate(8deg) scale(1.045, 0.955); }
+    45%  { transform: translateY(-4px) rotate(-7deg) scale(0.99, 1.01); }
+    62%  { transform: translateY(0.5px) rotate(5deg) scale(1.01, 0.99); }
+    78%  { transform: translateY(-1px) rotate(-3deg); }
+    100% { transform: translateY(0) rotate(0deg); }
+  }
+  @keyframes reboundShadow {
+    0%, 45%, 100% { opacity: 0.85; }
+    15%  { opacity: 0.55; }
+    30%  { opacity: 1; }
+  }
+  @keyframes wobble {
+    0%, 100% { transform: rotate(0deg) scale(1); }
+    15% { transform: rotate(-14deg) scale(1.06); }
+    30% { transform: rotate(9deg) scale(0.97); }
+    45% { transform: rotate(-7deg) scale(1.02); }
+    60% { transform: rotate(5deg) scale(0.99); }
+    75% { transform: rotate(-3deg) scale(1.01); }
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-9px); }
+    40% { transform: translateX(9px); }
+    60% { transform: translateX(-6px); }
+    80% { transform: translateX(6px); }
+  }
+  @keyframes jump {
+    0% { transform: translateY(0) scale(1, 1); }
+    20% { transform: translateY(10px) scale(1.12, 0.85); }
+    50% { transform: translateY(-44px) scale(0.88, 1.12); }
+    80% { transform: translateY(4px) scale(1.06, 0.95); }
+    100% { transform: translateY(0) scale(1, 1); }
+  }
+  @keyframes punch {
+    0%   { transform: translateX(0) rotate(0); }
+    30%  { transform: translateX(-16px) rotate(-22deg); }
+    55%  { transform: translateX(15px) rotate(30deg); }
+    70%  { transform: translateX(-10px) rotate(-14deg); }
+    85%  { transform: translateX(6px) rotate(8deg); }
+    100% { transform: translateX(0) rotate(0); }
+  }
+  @keyframes headtilt {
+    0%, 100% { transform: translateX(0) rotate(0); }
+    25% { transform: translateX(-3px) rotate(-18deg); }
+    50% { transform: translateX(4px) rotate(10deg); }
+    75% { transform: translateX(-2px) rotate(-12deg); }
+  }
+  @keyframes celebrate {
+    0%   { transform: translateY(0) rotate(0deg) scale(1, 1); }
+    10%  { transform: translateY(7px) rotate(0deg) scale(1.14, 0.86); }
+    35%  { transform: translateY(-40px) rotate(160deg) scale(0.9, 1.12); }
+    55%  { transform: translateY(-8px) rotate(360deg) scale(1.08, 0.92); }
+    68%  { transform: translateY(0) rotate(0deg) scale(1, 1); }
+    80%  { transform: translateY(-7px) rotate(-8deg) scale(1.05, 0.97); }
+    92%  { transform: translateY(0) rotate(5deg) scale(0.97, 1.03); }
+    100% { transform: translateY(0) rotate(0deg) scale(1, 1); }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="controls-zone">
+    <div id="controls">
+      <button id="btn-min" class="ctl" title="Minimize to tray">─</button>
+      <button id="btn-set" class="ctl" title="Settings">⚙</button>
+      <button id="btn-ct" class="ctl" title="Toggle click-through (clicks pass to other apps)">🖱</button>
+      <button id="btn-close" class="ctl" title="Quit">✕</button>
+    </div>
+  </div>
+
+  <div id="rope-wrap">
+    <svg id="rope-svg" aria-hidden="true">
+      <path id="rope-path" fill="none"/>
+      <path id="rope-path2" fill="none"/>
+    </svg>
+    <div id="knot"></div>
+  </div>
+
+  <div id="pet-rig">
+    <div id="pet-container">
+      <div id="mood-bubble"></div>
+      <img id="pet-img" style="display:none" draggable="false" alt="">
+      <div id="pet-svg-wrapper" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="ground-shadow"></div>
+</div>
+
+<script>
+(function() {
+  const stage = document.getElementById('stage');
+  const petRig = document.getElementById('pet-rig');
+  const petContainer = document.getElementById('pet-container');
+  const petImg = document.getElementById('pet-img');
+  const petSvg = document.getElementById('pet-svg-wrapper');
+  const moodBubble = document.getElementById('mood-bubble');
+  const groundShadow = document.getElementById('ground-shadow');
+  const ropeWrap = document.getElementById('rope-wrap');
+
+  let currentAnim = 'swing';
+  let baseAnim = 'swing';
+  let speed = 1;
+  let isDragging = false;
+  let dragMoved = false;
+  let suppressClick = false;
+  let activePointerId = null;
+  let pressX = 0, pressY = 0;
+  let currentX = 0, currentY = 0;
+  let totalDrag = 0;
+  let frameDt = 0.016;
+  let lastClickTime = 0;
+  let moodTimeout = null;
+
+  // --- Rope physics (constraint-solved segments, Hangly-style) ---
+  const ropeEl = document.getElementById('rope-svg');
+  const ropePath = document.getElementById('rope-path');
+  const ropePath2 = document.getElementById('rope-path2');
+  const knotEl = document.getElementById('knot');
+  // Physics runs at a fixed 240 Hz via an accumulator (like Hangly), so the
+  // rope feels identical on 60 Hz and 144 Hz displays. Gravity is scaled for
+  // the fixed step size.
+  const PHYS_DT = 1 / 240;
+  let physAcc = 0;
+  const ROPE_GRAV = 60000;
+  const ropeConfigs = {
+    braid:  { segs: 14, rlen: 4.0, damp: 0.9965, grav: 0.95, iters: 10, stretch: 1.02 },
+    cord:   { segs: 18, rlen: 3.1, damp: 0.9950, grav: 1.06, iters: 9, stretch: 1.015 },
+    twist:  { segs: 11, rlen: 5.1, damp: 0.9970, grav: 0.90, iters: 12, stretch: 1.01 },
+    ribbon: { segs: 12, rlen: 4.7, damp: 0.9960, grav: 0.98, iters: 10, stretch: 1.03 }
+  };
+  let ropeCfg = ropeConfigs.braid;
+  let ropePts = [];
+  let ropePrev = [];
+  let ropeTicking = false;
+  let ropeStill = 0;
+  let lastFrame = performance.now();
+  let lastDragT = 0;
+  let dragVelX = 0;
+  let dragVelY = 0;
+  let dragShake = 0;
+  let rotateSmooth = 0;
+  let shadowSmooth = 0;
+  let petSize = 140;
+  let lastSizeW = 0;
+  let lastSizeH = 0;
+  let ropeSegLen = 4;
+  // Constraint rest length per link: ropeSegLen plus the texture's stretch,
+  // so the chain carries 1-3% slack and drapes with a natural droop instead
+  // of rendering as a rigid straight line.
+  let linkLen = 4;
+  let ropeLengthPct = 100;
+  let swingA = 0;
+  let swingV = 0;
+  let leanSmooth = 0;
+
+  /* Maximum swing angle that keeps the pet fully inside the window. Beyond
+     it the pet would clip through the transparent window's edge. */
+  function swingClampA() {
+    const L = Math.max(1, ropeSegLen * ropeCfg.segs);
+    const half = stage.clientWidth / 2 - petSize * 0.45;
+    if (half <= 0) return 0.2;
+    return Math.min(0.85, Math.asin(Math.min(1, half / L)));
+  }
+
+  /* Smooth damped pendulum for the "swing" mode. The rope's free end follows it,
+     so the pet sways on a slow, predictable arc instead of the rope solver's
+     stiff micro-vibrations. A physically-correct longer rope sways a touch
+     slower, keeping the swing natural whatever the rope length.
+     While dragging, a stiff target-spring leans the pet against the drag
+     direction, so it dangles behind the cursor and swings out on release. */
+  function updateSwing(dt) {
+    if (baseAnim !== 'swing' || currentAnim !== 'swing') return;
+    const L = Math.max(1, ropeSegLen * ropeCfg.segs);
+    if (isDragging) {
+      /* Low-pass the lean target first: raw cursor velocity is noisy at
+         pointer-event rate, and feeding it straight into the spring makes the
+         pet shiver. The filter keeps one clean, continuous trailing motion. */
+      const raw = Math.max(-0.85, Math.min(0.85, -dragVelX / 1400));
+      leanSmooth += (raw - leanSmooth) * Math.min(1, 16 * dt);
+      swingV += (leanSmooth - swingA) * 120 * dt;
+      swingV *= Math.exp(-6 * dt);
+      swingA += swingV * dt;
+      return;
+    }
+    const om = (2 * Math.PI / 1.5) * Math.sqrt(224 / L) * Math.sqrt(speed);
+    swingV += (-om * om * swingA) * dt;
+    swingV *= Math.exp(-0.45 * dt);
+    swingA += swingV * dt;
+    /* Hard stop at the window-safe angle: the rope momentarily goes slack
+       instead of the pet clipping through the window edge. */
+    const Afit = swingClampA();
+    if (swingA > Afit) { swingA = Afit; if (swingV > 0) swingV = 0; }
+    else if (swingA < -Afit) { swingA = -Afit; if (swingV < 0) swingV = 0; }
+    if (Math.abs(swingA) < 0.004 && Math.abs(swingV) < 0.02) { swingA = 0; swingV = 0; }
+  }
+
+  function ropeAnchorX() { return stage.clientWidth / 2; }
+
+  /* Where the pet's top-center hangs: at the rope's end (straight hang), so
+     switching between swing and other animations keeps the pet glued to the
+     rope instead of teleporting between the rope end and the window bottom.
+     Clamped so the pet always stays fully inside the window. */
+  function petHangY() {
+    return Math.max(40, Math.min(ropeSegLen * ropeCfg.segs, stage.clientHeight - 12 - petSize));
+  }
+
+  /* (re)build the segments. Anchor pinned at the top-center; the rope's rest
+     length reaches from the top down to just above where the pet hangs, so the
+     pet visibly dangles on the rope at the bottom of the window. */
+  function initRope() {
+    const n = ropeCfg.segs;
+    const H = Math.max(200, stage.clientHeight);
+    // Rope length = its own setting (51-160% of the natural hang), clamped so
+    // the pet always stays fully on-screen no matter what the size is.
+    const baseRest = Math.max(60, H - 12 - petSize - 26);
+    const maxLen = Math.max(60, H - petSize - 8);
+    const rest = Math.min(maxLen, Math.max(60, baseRest * (ropeLengthPct / 100)));
+    ropeSegLen = Math.max(1.5, rest / n);
+    linkLen = ropeSegLen * (ropeCfg.stretch || 1);
+    ropeEl.setAttribute('width', stage.clientWidth);
+    ropeEl.setAttribute('height', H);
+    ropePts = []; ropePrev = [];
+    const ax = ropeAnchorX();
+    for (let i = 0; i <= n; i++) {
+      const y = i * ropeSegLen;
+      ropePts.push({ x: ax, y });
+      ropePrev.push({ x: ax, y });
+    }
+    wakeRope();
+  }
+
+  function nudgeRope(dx, dy) {
+    const n = ropeCfg.segs;
+    for (let i = 1; i <= n; i++) {
+      const k = 0.28 * (i / n);
+      ropePrev[i].x -= dx * k;
+      ropePrev[i].y -= dy * k * 0.5;
+    }
+    wakeRope();
+  }
+
+  /* One fixed Verlet substep. The accumulator in ropeTick calls this at
+     PHYS_DT intervals, which keeps damping and gravity frame-rate independent.
+     The speed slider drives the animations, not the rope's own physics. */
+  function stepRope(h) {
+    const n = ropeCfg.segs;
+    const g = ROPE_GRAV * ropeCfg.grav * h * h;
+    const ax = ropeAnchorX();
+    for (let i = 1; i <= n; i++) {
+      const p = ropePts[i];
+      const pv = ropePrev[i];
+      const vx = (p.x - pv.x) * ropeCfg.damp;
+      const vy = (p.y - pv.y) * ropeCfg.damp;
+      pv.x = p.x; pv.y = p.y;
+      p.x += vx;
+      p.y += vy + g;
+    }
+    ropePts[0].x = ax;
+    ropePts[0].y = 0;
+    for (let iter = 0; iter < ropeCfg.iters; iter++) {
+      for (let i = 1; i <= n; i++) {
+        const a = ropePts[i - 1];
+        const b = ropePts[i];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 1e-6) continue;
+        const diff = (d - linkLen) / d;
+        const move = diff * 0.5;
+        if (i === n) {
+          b.x -= dx * move;
+          b.y -= dy * move;
+        } else {
+          a.x += dx * move;
+          a.y += dy * move;
+          b.x -= dx * move;
+          b.y -= dy * move;
+        }
+      }
+    }
+  }
+
+  function drawRope() {
+    const n = ropeCfg.segs;
+    if (isDragging && dragShake > 0.25) {
+      ropePts[n].x += (Math.random() - 0.5) * dragShake * 0.9;
+      ropePts[n].y += (Math.random() - 0.5) * dragShake * 0.4;
+    }
+    const tail = ropePts[n];
+    const ropeTop = 0;
+    const cx = ropeAnchorX();
+
+    if (baseAnim === 'swing' && currentAnim === 'swing') {
+      /* The pet hangs ON the rope end: its top-center sits exactly on the tail
+         and the pendulum angle drives the swing. The rig carries this transform
+         so interaction animations (bounce, jump...) compose on top of it. */
+      const L = ropeSegLen * ropeCfg.segs;
+      const bobX = cx + Math.sin(swingA) * L;
+      const bobY = L * Math.cos(swingA);
+      tail.x = bobX;
+      tail.y = bobY;
+      const targetDeg = swingA * 180 / Math.PI;
+      const rotK = 1 - Math.pow(1 - 0.6, Math.max(0.001, frameDt) * 60);
+      rotateSmooth += (targetDeg - rotateSmooth) * rotK;
+      petRig.style.transform =
+        'translate(' + (bobX - petSize / 2).toFixed(1) + 'px,' + bobY.toFixed(1) + 'px)' +
+        ' rotate(' + rotateSmooth.toFixed(2) + 'deg)';
+      const starget = Math.sin(swingA) * L * 0.6;
+      const shK = 1 - Math.pow(1 - 0.3, Math.max(0.001, frameDt) * 60);
+      shadowSmooth += (starget - shadowSmooth) * shK;
+      groundShadow.style.transform = 'translateX(calc(-50% + ' + shadowSmooth.toFixed(1) + 'px))';
+    } else {
+      /* Any other animation: the pet stays hanging at the rope end (straight
+         hang, no rotation) and the rope follows the pet's real position —
+         knot glued to the pet, no gap, no jump when animations switch. */
+      const rx = cx - petSize / 2;
+      const ry = petHangY();
+      petRig.style.transform = 'translate(' + rx.toFixed(1) + 'px,' + ry.toFixed(1) + 'px)';
+      const pr = petContainer.getBoundingClientRect();
+      const sr = stage.getBoundingClientRect();
+      tail.x += ((pr.left - sr.left + pr.width / 2) - tail.x) * 0.45;
+      tail.y += ((pr.top - sr.top) - tail.y) * 0.45;
+      const starget = (tail.x - cx) * 0.5;
+      shadowSmooth += (starget - shadowSmooth) * 0.3;
+      groundShadow.style.transform = 'translateX(calc(-50% + ' + shadowSmooth.toFixed(1) + 'px))';
+    }
+
+    knotEl.style.left = tail.x + 'px';
+    knotEl.style.top = tail.y + 'px';
+
+    let d = 'M ' + ropePts[0].x.toFixed(1) + ' ' + ropePts[0].y.toFixed(1);
+    for (let i = 1; i <= n; i++) {
+      const a = ropePts[i - 1];
+      const b = ropePts[i];
+      d += ' Q ' + a.x.toFixed(1) + ' ' + a.y.toFixed(1) + ' ' + ((a.x + b.x) / 2).toFixed(1) + ' ' + ((a.y + b.y) / 2).toFixed(1);
+    }
+    ropePath.setAttribute('d', d);
+    ropePath2.setAttribute('d', d);
+  }
+
+  /* Sleep when the rope has settled, so idle costs almost nothing (Hangly aims
+     for ~1% of a core; we go one better and stop ticking entirely). */
+  function ropeTick(t) {
+    ropeTicking = true;
+    const W = stage.clientWidth;
+    const H = stage.clientHeight;
+    if (W > 40 && H > 40 && (Math.abs(W - lastSizeW) > 2 || Math.abs(H - lastSizeH) > 2)) {
+      lastSizeW = W;
+      lastSizeH = H;
+      initRope();
+    }
+    const dt = Math.min(0.05, Math.max(0.001, (t - lastFrame) / 1000 || 0.016));
+    frameDt = dt;
+    lastFrame = t;
+    const n = ropeCfg.segs;
+    physAcc = Math.min(0.25, physAcc + dt);
+    while (physAcc >= PHYS_DT) {
+      updateSwing(PHYS_DT);
+      stepRope(PHYS_DT);
+      /* Pin the free end where the pet hangs, every substep — while dragging
+         too, so the rope drapes off the moving pet with zero lag or jitter
+         instead of rubber-banding behind it. */
+      const L = ropeSegLen * ropeCfg.segs;
+      if (baseAnim === 'swing' && currentAnim === 'swing') {
+        ropePts[n].x = ropeAnchorX() + Math.sin(swingA) * L;
+        ropePts[n].y = L * Math.cos(swingA);
+      } else if (isDragging) {
+        ropePts[n].x = ropeAnchorX();
+        ropePts[n].y = petHangY();
+      }
+      physAcc -= PHYS_DT;
+    }
+    drawRope();
+    if (isDragging) {
+      ropeStill = 0;
+    } else {
+      const spd = Math.hypot(ropePts[n].x - ropePrev[n].x, ropePts[n].y - ropePrev[n].y);
+      const swinging = Math.abs(swingA) > 0.004 || Math.abs(swingV) > 0.02;
+      if (spd < 0.07 && !swinging) {
+        if (++ropeStill > 80) { ropeStill = 0; ropeTicking = false; return; }
+      } else {
+        ropeStill = 0;
+      }
+    }
+    requestAnimationFrame(ropeTick);
+  }
+
+  function wakeRope() {
+    if (!ropeTicking) requestAnimationFrame(ropeTick);
+  }
+
+  function setSpeed(v) {
+    speed = Math.max(0.2, Math.min(3, v || 1));
+    const baseDur = 2.6;
+    petContainer.style.setProperty('--dur', (baseDur / speed) + 's');
+  }
+
+  function updatePhysicsActive() {
+    stage.classList.toggle('physics-on', baseAnim === 'swing');
+  }
+
+  function setAnim(name) {
+    stage.classList.remove('anim-' + currentAnim, 'pop-stage');
+    void stage.offsetWidth;
+    currentAnim = name;
+    stage.classList.add('anim-' + name);
+    updatePhysicsActive();
+    wakeRope();
+  }
+
+  function setBaseAnim(name) {
+    if (name && stage) {
+      baseAnim = name;
+      setAnim(name);
+    }
+  }
+
+  function restoreAnim(delay) {
+    setTimeout(() => {
+      if (stage.classList.contains('anim-' + currentAnim)) setAnim(baseAnim);
+    }, delay);
+  }
+
+  function setSize(s) {
+    const size = Math.max(40, Math.min(320, s || 140));
+    petSize = size;
+    petRig.style.width = petSize + 'px';
+    petRig.style.height = petSize + 'px';
+    groundShadow.style.width = (petSize * 0.6) + 'px';
+    initRope();
+  }
+
+  const ROPE_COLORS = {
+    brown:  ['#cfa36a', '#9e6b38', '#e9c28a', '#a9743d', '#7a471d'],
+    tan:    ['#e6c48c', '#b4874e', '#f0d6a2', '#bf9259', '#8a5f2e'],
+    blonde: ['#ecd9a8', '#c9b079', '#f5e6bd', '#d4bc85', '#a08d56'],
+    crimson:['#c25b5b', '#8a3a3a', '#d47b7b', '#9b4747', '#632626'],
+    teal:   ['#5bb8a8', '#3a7d72', '#75cdbd', '#489186', '#2b5f55'],
+    cobalt: ['#6b7fc2', '#46599b', '#8496d1', '#5467aa', '#37477d']
+  };
+  const ROPE_TEXTURES = ['braid', 'cord', 'twist', 'ribbon'];
+
+  /* Custom rope colors: derive the full 5-shade palette (main strand, dark
+     dashes, knot highlight/mid/rim) from any hex color the user picks. */
+  function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    return [parseInt(n.slice(0, 2), 16), parseInt(n.slice(2, 4), 16), parseInt(n.slice(4, 6), 16)];
+  }
+  function shadeHex(hex, amt) {
+    const rgb = hexToRgb(hex);
+    const t = amt < 0 ? 0 : 255;
+    const p = Math.abs(amt);
+    const mix = (c) => Math.round(c + (t - c) * p).toString(16).padStart(2, '0');
+    return '#' + rgb.map(mix).join('');
+  }
+  const isCustomHex = (c) => typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c);
+
+  let ropeColor = 'brown';
+  let ropeTexture = 'braid';
+
+  function applyRopeStyle(style) {
+    if (!style || typeof style !== 'object') return;
+    if (style.color && (ROPE_COLORS[style.color] || isCustomHex(style.color))) {
+      ropeColor = style.color;
+      const c = ROPE_COLORS[ropeColor] || [
+        ropeColor,                   // main strand
+        shadeHex(ropeColor, -0.28),  // dark dash overlay
+        shadeHex(ropeColor, 0.28),   // knot highlight
+        shadeHex(ropeColor, -0.10),  // knot mid
+        shadeHex(ropeColor, -0.45)   // knot rim
+      ];
+      stage.style.setProperty('--rp1', c[0]);
+      stage.style.setProperty('--rp2', c[1]);
+      stage.style.setProperty('--rpk1', c[2]);
+      stage.style.setProperty('--rpk2', c[3]);
+      stage.style.setProperty('--rpk3', c[4]);
+    }
+    if (style.texture && ROPE_TEXTURES.includes(style.texture)) {
+      ROPE_TEXTURES.forEach((t) => stage.classList.toggle('rope-' + t, t === style.texture));
+      ropeTexture = style.texture;
+      ropeCfg = ropeConfigs[ropeTexture];
+      initRope();
+    }
+    stage.classList.remove('rope-swapping');
+    void stage.offsetWidth;
+    stage.classList.add('rope-swapping');
+  }
+
+  function setImage(data) {
+    if (!data) return;
+    if (typeof data === 'string') {
+      const d = data.trim();
+      const svgPos = d.indexOf('<svg');
+      const isSvgMarkup = svgPos !== -1 && svgPos < 400 && !d.startsWith('data:');
+      if (isSvgMarkup) {
+        petSvg.innerHTML = d;
+        petSvg.style.display = 'flex';
+        petImg.style.display = 'none';
+        return;
+      }
+    }
+    petImg.src = data;
+    petImg.style.display = 'block';
+    petSvg.style.display = 'none';
+  }
+
+  function showMood(emoji, text) {
+    moodBubble.textContent = emoji;
+    moodBubble.title = text || '';
+    moodBubble.classList.add('show');
+    clearTimeout(moodTimeout);
+    moodTimeout = setTimeout(() => moodBubble.classList.remove('show'), 2000);
+  }
+
+  const moodEmojis = {
+    happy: '😊', excited: '🤩', sleepy: '😴', love: '😍',
+    silly: '😜', cool: '😎', hungry: '🍔', angry: '😤',
+    confused: '🤔', dancing: '💃'
+  };
+
+  function setMood(m) {
+    const emoji = moodEmojis[m] || '😊';
+    showMood(emoji, m);
+  }
+
+  function spawnParticles(count, emojis) {
+    const stageRect = stage.getBoundingClientRect();
+    const petRect = petContainer.getBoundingClientRect();
+    const cx = petRect.left - stageRect.left + petRect.width / 2;
+    const cy = petRect.top - stageRect.top + petRect.height / 2;
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      p.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+      p.style.left = (cx + (Math.random() - 0.5) * 44) + 'px';
+      p.style.top = (cy + (Math.random() - 0.5) * 44) + 'px';
+      p.style.setProperty('--dx', ((Math.random() - 0.5) * 130) + 'px');
+      p.style.setProperty('--dy', (-(Math.random() * 90 + 30)) + 'px');
+      p.style.setProperty('--rot', (Math.random() * 360) + 'deg');
+      stage.appendChild(p);
+      setTimeout(() => p.remove(), 1050);
+    }
+  }
+
+  function spawnRing(emoji) {
+    const stageRect = stage.getBoundingClientRect();
+    const petRect = petContainer.getBoundingClientRect();
+    const cx = petRect.left - stageRect.left + petRect.width / 2;
+    const cy = petRect.top - stageRect.top + petRect.height / 2;
+    const r = document.createElement('div');
+    r.className = 'ring';
+    r.textContent = emoji || '';
+    r.style.left = (cx - 11) + 'px';
+    r.style.top = (cy - 11) + 'px';
+    r.style.display = 'flex';
+    r.style.alignItems = 'center';
+    r.style.justifyContent = 'center';
+    r.style.fontSize = '10px';
+    stage.appendChild(r);
+    setTimeout(() => r.remove(), 720);
+  }
+
+  function popStage() {
+    stage.classList.remove('pop-stage');
+    void stage.offsetWidth;
+    stage.classList.add('pop-stage');
+  }
+
+  function celebrateCarousel() {
+    setAnim('celebrate');
+    spawnRing('🎉');
+    spawnParticles(8, ['⭐', '✨', '💫', '🌟']);
+    setMood('love');
+    setTimeout(() => spawnParticles(6, ['❤️', '💕', '💖']), 350);
+    restoreAnim(1400);
+  }
+
+  const REACTIONS = [
+    { anim: 'shake',  mood: 'silly',   particles: ['😜', '🤪', '😝'], delay: 800 },
+    { anim: 'bounce', mood: 'happy',   particles: ['💚', '💛', '💙'], delay: 1100 },
+    { anim: 'nod',    mood: 'love',    particles: ['❤️', '💕', '💗'], delay: 1100 },
+    { anim: 'wiggle', mood: 'excited', particles: ['🎉', '🎊', '🎈'], delay: 1100 },
+    { anim: 'wobble', mood: 'cool',    particles: ['😎', '🕶', '🤙'], delay: 1100 },
+    { anim: 'jump',   mood: 'excited', particles: ['🦘', '⬆️', '⭐'], delay: 1100 },
+    { anim: 'punch',  mood: 'happy',   particles: ['👊', '💥', '⭐'], delay: 1100 }
+  ];
+
+  function doReaction(anim, particles, mood, count, delay) {
+    popStage();
+    setAnim(anim);
+    spawnParticles(count, particles);
+    setMood(mood);
+    restoreAnim(delay);
+  }
+
+  function randomReaction(count) {
+    const r = REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
+    doReaction(r.anim, r.particles, r.mood, count || 5, r.delay);
+  }
+
+  // --- Window controls ---
+  document.getElementById('btn-min').addEventListener('click', (e) => {
+    e.stopPropagation();
+    api.send('minimize-pet');
+  });
+  document.getElementById('btn-set').addEventListener('click', (e) => {
+    e.stopPropagation();
+    api.send('open-settings');
+  });
+  document.getElementById('btn-ct').addEventListener('click', (e) => {
+    e.stopPropagation();
+    api.send('toggle-clickthrough', !document.body.classList.contains('clickthrough'));
+  });
+  document.getElementById('btn-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    api.send('quit');
+  });
+
+  // Flash controls briefly on startup so users discover them
+  setTimeout(() => {
+    stage.classList.add('controls-visible');
+    setTimeout(() => stage.classList.remove('controls-visible'), 2500);
+  }, 800);
+
+  // While click-through is on, keep the pet interactive: hovering the pet body
+  // disables click-through so it can be grabbed/pushed/pulled, re-enabling when the cursor leaves.
+  let touchState = false;
+  let ctHoverActive = false;
+  function setTouchState(v) {
+    if (v === touchState || !document.body.classList.contains('clickthrough')) return;
+    touchState = v;
+    document.body.style.cursor = v ? 'grab' : '';
+    api.send('set-mouse-over-pet', v);
+  }
+
+  // --- Click-through state ---
+  api.on('clickthrough', (enabled) => {
+    document.body.classList.toggle('clickthrough', !!enabled);
+    ctHoverActive = false;
+    if (enabled) {
+      if (isDragging) { isDragging = false; api.send('end-drag'); }
+      document.body.style.cursor = '';
+      document.body.classList.remove('dragging');
+      petContainer.classList.remove('dragging');
+      setAnim(baseAnim);
+      touchState = false;
+      api.send('set-mouse-over-pet', false);
+    }
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!document.body.classList.contains('clickthrough')) { ctHoverActive = false; return; }
+    /* Grabbable zone = the pet body plus a slim band around the rope, kept as
+       tight as possible so clicks aimed at apps underneath are only intercepted
+       where the pet is actually drawn. A little hysteresis (extra margin while
+       already active) stops the window from flickering between click-through
+       and interactive when the cursor rides the pet's edge. */
+    const s = stage.getBoundingClientRect();
+    const p = petContainer.getBoundingClientRect();
+    const cx = s.left + s.width / 2;
+    const m = ctHoverActive ? 12 : 0;
+    const onPet = e.clientX >= p.left - m && e.clientX <= p.right + m &&
+                  e.clientY >= p.top - m && e.clientY <= p.bottom + 10 + m;
+    const onRope = !onPet && e.clientY < p.top &&
+                   e.clientY >= s.top - m &&
+                   Math.abs(e.clientX - cx) <= 16 + m;
+    ctHoverActive = onPet || onRope;
+    setTouchState(ctHoverActive);
+  });
+  document.addEventListener('mouseleave', () => { ctHoverActive = false; setTouchState(false); });
+
+  // --- Interaction Handlers ---
+  petContainer.addEventListener('mouseenter', () => {
+    petContainer.style.filter = 'brightness(1.1) saturate(1.1)';
+    groundShadow.style.opacity = '0.85';
+  });
+
+  petContainer.addEventListener('mouseleave', () => {
+    petContainer.style.filter = '';
+    groundShadow.style.opacity = '';
+  });
+
+  function beginDrag(e) {
+    isDragging = true;
+    dragMoved = false;
+    totalDrag = 0;
+    pressX = currentX = e.screenX;
+    pressY = currentY = e.screenY;
+    /* Pointer capture keeps every move event flowing to us at the cursor's
+       native rate even when the cursor outruns the window or leaves it —
+       fast drags can no longer be dropped or cancelled mid-flight. The
+       window itself is moved by the main process (cursor-polling), so there
+       is no IPC round-trip between mouse and window motion. */
+    activePointerId = e.pointerId;
+    try { petContainer.setPointerCapture(e.pointerId); } catch (err) { /* older builds */ }
+    lastDragT = performance.now();
+    dragVelX = 0;
+    dragVelY = 0;
+    dragShake = 0;
+    leanSmooth = swingA;
+    document.body.style.cursor = 'grabbing';
+    document.body.classList.add('dragging');
+    petContainer.classList.add('dragging');
+    api.send('begin-drag');
+    wakeRope();
+    e.preventDefault();
+  }
+
+  function endDrag(released) {
+    if (!isDragging) return;
+    const wasMoved = dragMoved;
+    /* Only the horizontal component of the flick drives the pendulum — a
+       vertical flick shouldn't kick a sideways swing. */
+    const flickSpeed = Math.abs(dragVelX);
+    const flickDir = dragVelX >= 0 ? 1 : -1;
+    isDragging = false;
+    dragMoved = false;
+    /* A captured pointer still delivers a click after release; swallow it so
+       dragging never doubles as "poking" the pet. */
+    suppressClick = wasMoved;
+    document.body.style.cursor = '';
+    document.body.classList.remove('dragging');
+    petContainer.classList.remove('dragging');
+    dragVelX = 0;
+    dragVelY = 0;
+    dragShake = 0;
+    activePointerId = null;
+    api.send('end-drag');
+    if (released && wasMoved) {
+      /* Continuous handoff: swingA/swingV already carry the drag spring's
+         exact state, so the pendulum takes over seamlessly — no angle snap,
+         no forced velocity. A fast horizontal flick ADDS speed on top of the
+         natural release velocity; a gentle release just lets it drift back. */
+      if (flickSpeed > 320) {
+        swingV = flickDir * Math.min(3.8, Math.abs(swingV) + (flickSpeed - 320) * 0.0015);
+        spawnParticles(3, ['💨', '💨', '💫']);
+        setMood('excited');
+      } else {
+        spawnParticles(3, ['💫', '✨', '💚']);
+      }
+      wakeRope();
+      setAnim('swing');
+      restoreAnim(0);
+    }
+  }
+
+  petContainer.addEventListener('pointerdown', (e) => {
+    if (e.button === 0) beginDrag(e);
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    const dx = e.screenX - currentX;
+    const dy = e.screenY - currentY;
+    const nowT = performance.now();
+    const dtm = Math.max(0.008, Math.min(0.1, (nowT - lastDragT) / 1000));
+    lastDragT = nowT;
+    const vx = dx / dtm;
+    const vy = dy / dtm;
+    /* Heavier smoothing on the velocity estimate: pointer events are noisy at
+       their native rate and the lean spring amplifies every spike. */
+    dragVelX = dragVelX * 0.7 + (isFinite(vx) ? vx : 0) * 0.3;
+    dragVelY = dragVelY * 0.7 + (isFinite(vy) ? vy : 0) * 0.3;
+    dragShake = Math.max(dragShake * 0.92, Math.min(3, Math.hypot(dragVelX, dragVelY) / 1500));
+    currentX = e.screenX;
+    currentY = e.screenY;
+    totalDrag = Math.sqrt((currentX - pressX) ** 2 + (currentY - pressY) ** 2);
+    if (totalDrag > 6) dragMoved = true;
+  });
+
+  document.addEventListener('pointerup', (e) => {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+    endDrag(true);
+  });
+  document.addEventListener('pointercancel', () => endDrag(false));
+  window.addEventListener('blur', () => endDrag(false));
+
+  petContainer.addEventListener('click', (e) => {
+    if (isDragging) return;
+    if (suppressClick) { suppressClick = false; return; }
+    const now = Date.now();
+    const timeSinceLast = now - lastClickTime;
+    lastClickTime = now;
+
+    if (timeSinceLast < 350) {
+      celebrateCarousel();
+      return;
+    }
+
+    popStage();
+    const r = REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
+    doReaction(r.anim, r.particles, r.mood, 5, r.delay);
+  });
+
+  petContainer.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (isDragging) return;
+    // Native menu at the cursor: settings, click-through, position, quit —
+    // always reachable, including while click-through mode is on.
+    api.send('pet-context-menu');
+  });
+
+  // --- IPC Listeners ---
+  api.on('pet-image', setImage);
+  api.on('position-lock', (unlocked) => {
+    stage.classList.toggle('move-mode', !!unlocked);
+  });
+  api.on('ground-shadow', (v) => {
+    groundShadow.style.display = v ? '' : 'none';
+  });
+  api.on('animation', setBaseAnim);
+  api.on('size', setSize);
+  api.on('speed', setSpeed);
+  api.on('mood', setMood);
+  api.on('bg-color', (color) => {
+    document.body.style.background = color || 'transparent';
+  });
+  api.on('interaction', (type) => {
+    if (type === 'click') {
+      randomReaction(4);
+    } else if (type === 'double-click') {
+      celebrateCarousel();
+    } else if (type === 'right-click') {
+      if (isDragging || dragMoved) return;
+      popStage();
+      setAnim('confused');
+      spawnRing('❓');
+      setMood('confused');
+      restoreAnim(1100);
+    }
+  });
+  api.on('window-motion', (m) => {
+    if (m && typeof m.dx === 'number' && typeof m.dy === 'number') {
+      if (baseAnim === 'swing' && currentAnim === 'swing') {
+        const L = Math.max(1, ropeSegLen * ropeCfg.segs);
+        swingV += (m.dx / L) * 0.2;
+        wakeRope();
+      } else {
+        nudgeRope(m.dx * 0.6, m.dy * 0.4);
+      }
+    }
+  });
+  api.on('rope-style', applyRopeStyle);
+  api.on('rope-length', (pct) => {
+    const p = Math.max(40, Math.min(160, Number(pct) || 100));
+    if (p !== ropeLengthPct) {
+      ropeLengthPct = p;
+      initRope();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    initRope();
+  });
+
+  // Init defaults
+  setAnim('swing');
+  setSpeed(1);
+  setSize(140);
+  updatePhysicsActive();
+  initRope();
+  wakeRope();
+
+  // Default character (kitty)
+  const DEFAULT_PET = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <g transform="translate(50,55)">
+      <ellipse cx="0" cy="5" rx="28" ry="30" fill="#FF9F43"/>
+      <ellipse cx="-12" cy="-22" rx="10" ry="16" fill="#FF9F43"/>
+      <ellipse cx="-12" cy="-24" rx="6" ry="10" fill="#FDA7DF"/>
+      <ellipse cx="12" cy="-22" rx="10" ry="16" fill="#FF9F43"/>
+      <ellipse cx="12" cy="-24" rx="6" ry="10" fill="#FDA7DF"/>
+      <circle cx="-10" cy="-4" r="5" fill="#222"/>
+      <circle cx="10" cy="-4" r="5" fill="#222"/>
+      <circle cx="-8" cy="-5" r="2" fill="white"/>
+      <circle cx="12" cy="-5" r="2" fill="white"/>
+      <ellipse cx="0" cy="3" rx="3" ry="2" fill="#FDA7DF"/>
+      <line x1="-6" y1="6" x2="-25" y2="2" stroke="#FF9F43" stroke-width="1.5"/>
+      <line x1="-6" y1="8" x2="-25" y2="8" stroke="#FF9F43" stroke-width="1.5"/>
+      <line x1="6" y1="6" x2="25" y2="2" stroke="#FF9F43" stroke-width="1.5"/>
+      <line x1="6" y1="8" x2="25" y2="8" stroke="#FF9F43" stroke-width="1.5"/>
+      <path d="M-5,8 Q0,14 5,8" fill="none" stroke="#222" stroke-width="1.5"/>
+      <ellipse cx="0" cy="35" rx="6" ry="4" fill="#FF9F43"/>
+      <path d="M-6,35 Q-6,45 -10,48" fill="none" stroke="#FF9F43" stroke-width="4" stroke-linecap="round"/>
+      <path d="M6,35 Q6,45 10,48" fill="none" stroke="#FF9F43" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </svg>`;
+  setImage(DEFAULT_PET);
+})();
+</script>
+</body>
+</html>

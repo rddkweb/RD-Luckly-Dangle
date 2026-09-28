@@ -1,0 +1,37 @@
+{
+  "name": "danglepet",
+  "productName": "RD Luckly Dangle",
+  "version": "2.1.0",
+  "description": "RD Luckly Dangle - floating desktop pet for Windows",
+  "main": "main.js",
+  "author": "RD Luckly Dangle",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win nsis",
+    "build:portable": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.rdlucklydangle.app",
+    "productName": "RD Luckly Dangle",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "pet.html",
+      "assets/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
