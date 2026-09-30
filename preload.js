@@ -6,17 +6,17 @@ const validSendChannels = [
   'open-settings', 'move-pet', 'pet-context-menu', 'reset-position',
   'hide-pet', 'show-pet', 'minimize-pet', 'quit',
   'begin-drag', 'end-drag', 'set-mouse-over-pet', 'set-position', 'rope-style',
-  'set-rope-length'
+  'set-rope-length', 'set-physics'
 ];
 
 const validReceiveChannels = [
   'pet-image', 'animation', 'size', 'speed',
   'bg-color', 'mood', 'interaction', 'clickthrough', 'window-motion',
-  'rope-style', 'rope-length', 'visibility', 'position-lock', 'ground-shadow', 'autostart'
+  'rope-style', 'rope-length', 'physics', 'visibility', 'position-lock', 'ground-shadow', 'autostart'
 ];
 
 const validInvokeChannels = [
-  'get-path', 'get-supported-formats', 'read-image-as-dataurl', 'get-clickthrough', 'get-position-lock', 'get-ground-shadow', 'get-autostart'
+  'get-path', 'get-supported-formats', 'read-image-as-dataurl', 'get-clickthrough', 'get-position-lock', 'get-ground-shadow', 'get-autostart', 'get-physics'
 ];
 
 contextBridge.exposeInMainWorld('api', {

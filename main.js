@@ -24,6 +24,10 @@ let groundShadowOn = true;
 // Launch automatically when the user signs in to Windows (on by default).
 let autoStartEnabled = true;
 let mouseOverPet = false;
+// True while a renderer drag is in flight (in either locked or unlocked mode).
+// The mouse-ignore decision must NEVER flip the window to click-through
+// mid-drag, or the pointer stops reaching us and the drag silently dies.
+let dragActive = false;
 let springTimer = null;
 let ropeStyle = null;
 
@@ -40,8 +44,70 @@ let savedPrefs = {
   speed: null,
   ropeStyle: null,
   ropeLength: null,
-  position: null
+  position: null,
+  physics: null
 };
+
+// Defaults for the elastic rubber-rope physics system. The renderer sanitizes
+// its own copy too, so either side staying in range is guaranteed no matter
+// who sends what.
+const DEFAULT_PHYSICS = {
+  enabled: true,
+  elasticity: 50,
+  mass: 1,          // dangle mass
+  ropeMass: 0.5,    // mass of the rope itself, shared across its nodes
+  segments: 12,     // springs in the cord
+  gravity: 9.81,
+  damping: 35,
+  maxStretch: 200,
+  ropeSwing: true,
+  ropeBounce: true,
+  ropeBending: true,
+  ropeCompression: true,
+  preset: 'realistic'
+};
+
+function sanitizePhysics(p) {
+  // Merge with the current saved physics first, so partial updates (e.g. just
+  // toggling the enable switch) never wipe the other settings back to defaults.
+  const prev = savedPrefs.physics && typeof savedPrefs.physics === 'object' ? savedPrefs.physics : {};
+  const base = Object.assign({}, prev, (p && typeof p === 'object') ? p : {});
+  const c = {};
+  const f = (v, lo, hi, d) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d);
+  const b = (v, d) => (typeof v === 'boolean' ? v : d);
+  c.enabled = b(base.enabled, DEFAULT_PHYSICS.enabled);
+  c.elasticity = f(base.elasticity, 0, 100, DEFAULT_PHYSICS.elasticity);
+  c.mass = f(base.mass, 0.1, 10, DEFAULT_PHYSICS.mass);
+  c.ropeMass = f(base.ropeMass, 0.1, 2, DEFAULT_PHYSICS.ropeMass);
+  c.segments = Math.round(f(base.segments, 4, 30, DEFAULT_PHYSICS.segments));
+  c.gravity = f(base.gravity, 0, 30, DEFAULT_PHYSICS.gravity);
+  c.damping = f(base.damping, 0, 100, DEFAULT_PHYSICS.damping);
+  c.maxStretch = f(base.maxStretch, 100, 400, DEFAULT_PHYSICS.maxStretch);
+  c.ropeSwing = b(base.ropeSwing, DEFAULT_PHYSICS.ropeSwing);
+  c.ropeBounce = b(base.ropeBounce, DEFAULT_PHYSICS.ropeBounce);
+  c.ropeBending = b(base.ropeBending, DEFAULT_PHYSICS.ropeBending);
+  c.ropeCompression = b(base.ropeCompression, DEFAULT_PHYSICS.ropeCompression);
+  c.preset = typeof base.preset === 'string' ? base.preset : DEFAULT_PHYSICS.preset;
+  return c;
+}
+
+function physicsConfig() {
+  const p = savedPrefs.physics && typeof savedPrefs.physics === 'object' ? savedPrefs.physics : {};
+  const c = sanitizePhysics(p);
+  // Rope length lives in its own preference (it predates the physics panel) but
+  // is part of the same physical rig, so it travels with the physics config and
+  // the panel's Rope Length slider always mirrors the real rope.
+  c.ropeLength = (typeof savedPrefs.ropeLength === 'number')
+    ? Math.max(40, Math.min(160, savedPrefs.ropeLength))
+    : 100;
+  return c;
+}
+
+function broadcastPhysics() {
+  const cfg = physicsConfig();
+  if (petWin) petWin.webContents.send('physics', cfg);
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('physics', cfg);
+}
 
 // Position is saved with a trailing debounce while dragging (many move events)
 // and flushed on graceful quit, so "drag & leave" keeps the pet where you
@@ -196,6 +262,7 @@ function createPet() {
       petWin.webContents.send('rope-style', savedPrefs.ropeStyle || ropeStyle);
     }
     if (savedPrefs.ropeLength) petWin.webContents.send('rope-length', savedPrefs.ropeLength);
+    petWin.webContents.send('physics', physicsConfig());
     if (savedPrefs.speed) petWin.webContents.send('speed', savedPrefs.speed);
     if (savedPrefs.size) petWin.webContents.send('size', savedPrefs.size);
     if (savedPrefs.petImage) petWin.webContents.send('pet-image', savedPrefs.petImage);
@@ -364,14 +431,17 @@ ipcMain.on('set-mood', (_, mood) => {
   if (petWin) petWin.webContents.send('mood', mood);
 });
 
+// Single source of truth for how the pet window consumes mouse input.
+// interactionMode is owned by the renderer and mirrored here via three
+// signals: set-mouse-over-pet (hover), begin-drag / end-drag (dragging).
+// Summary: click-through applies only when both
+//   clickThroughEnabled === true   AND   dragActive === false
+// while otherwise hover (mouseOverPet) refines it to the pet body itself.
+// A mid-drag state change can never turn ignore on.
 function syncMouseIgnore() {
   if (!petWin) return;
-  if (clickThroughEnabled) {
-    // Click-through, EXCEPT when the cursor is hovering the pet itself so it can be grabbed/dragged
-    petWin.setIgnoreMouseEvents(!mouseOverPet, { forward: true });
-  } else {
-    petWin.setIgnoreMouseEvents(false);
-  }
+  const ignore = clickThroughEnabled && !dragActive && !mouseOverPet;
+  petWin.setIgnoreMouseEvents(ignore, { forward: true });
 }
 
 ipcMain.on('set-mouse-over-pet', (_, over) => {
@@ -566,7 +636,29 @@ ipcMain.on('set-rope-length', (_, pct) => {
   savedPrefs.ropeLength = v;
   savePrefs();
   if (petWin) petWin.webContents.send('rope-length', v);
+  // The physics panel mirrors rope length, so it has to follow live changes made
+  // from the rope card too (and vice-versa) — one value, both windows.
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('physics', physicsConfig());
+  }
 });
+
+ipcMain.on('set-physics', (_, cfg) => {
+  // Reset re-seeds the persisted physics prefs from the app defaults and
+  // broadcasts so both the pet and the panel pick the new config up live.
+  if (cfg && typeof cfg === 'object' && cfg.reset) {
+    savedPrefs.physics = Object.assign({}, DEFAULT_PHYSICS);
+    savePrefs();
+    broadcastPhysics();
+    return;
+  }
+  const sanitized = sanitizePhysics((cfg && typeof cfg === 'object') ? cfg : {});
+  savedPrefs.physics = sanitized;
+  savePrefs();
+  broadcastPhysics();
+});
+
+ipcMain.handle('get-physics', () => physicsConfig());
 
 ipcMain.on('move-pet', (_, pos) => {
   if (!petWin || !pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
@@ -603,6 +695,11 @@ function dragMoveTo(x, y) {
 ipcMain.on('begin-drag', () => {
   if (springTimer) { clearInterval(springTimer); springTimer = null; }
   stopDragPoll();
+  // While a drag runs, the window must stay interactive no matter what the
+  // hover state says — a fast swipe can put the cursor off the pet body, but
+  // the drag must not be killed by click-through.
+  dragActive = true;
+  syncMouseIgnore();
   // Position locked: the anchor (and window) must not move. The renderer
   // still runs its tug physics locally, so the pet leans and swings —
   // only the window stays put.
@@ -622,6 +719,11 @@ ipcMain.on('begin-drag', () => {
 
 ipcMain.on('end-drag', () => {
   stopDragPoll();
+  dragActive = false;
+  // Re-evaluate click-through with the drag gone. The renderer sends a fresh
+  // set-mouse-over-pet just after end-drag, so this is usually a no-op that
+  // keeps interactive state until the next hover message lands.
+  syncMouseIgnore();
   persistPosition();
 });
 

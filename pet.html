@@ -110,12 +110,12 @@
   }
   #rope-path {
     stroke: var(--rp1);
-    stroke-width: 3.5;
+    stroke-width: calc(3.5px * var(--rope-thick, 1));
     stroke-linecap: round;
   }
   #rope-path2 {
     stroke: var(--rp2);
-    stroke-width: 3.5;
+    stroke-width: calc(3.5px * var(--rope-thick, 1));
     stroke-linecap: round;
     stroke-dasharray: 2 4 4 2;
     opacity: 0.6;
@@ -143,11 +143,11 @@
   /* Rope textures: same solver credentials as Hangly-style ropes — each one
      is a different set of values, not just a different picture. */
   #stage.rope-cord #rope-path2 { display: none; }
-  #stage.rope-cord #rope-path { stroke-width: 3; }
+  #stage.rope-cord #rope-path { stroke-width: calc(3px * var(--rope-thick, 1)); }
   #stage.rope-twist #rope-path2 { stroke-dasharray: 1.5 3; opacity: 0.9; }
   #stage.rope-twist #rope-path { stroke-dasharray: 3 5; opacity: 0.75; }
-  #stage.rope-ribbon #rope-path { stroke-width: 7; }
-  #stage.rope-ribbon #rope-path2 { stroke-width: 5; stroke-dasharray: 10 4; opacity: 0.35; }
+  #stage.rope-ribbon #rope-path { stroke-width: calc(7px * var(--rope-thick, 1)); }
+  #stage.rope-ribbon #rope-path2 { stroke-width: calc(5px * var(--rope-thick, 1)); stroke-dasharray: 10 4; opacity: 0.35; }
   /* Smooth flash when the rope style changes */
   @keyframes rope-fx {
     0%   { filter: brightness(1.7) drop-shadow(0 0 6px rgba(255,255,255,0.5)); }
@@ -435,11 +435,19 @@
   let baseAnim = 'swing';
   let speed = 1;
   let isDragging = false;
+  // Position lock is mirrored from the main process, so the renderer can pick
+  // the right drag behavior: locked = tug the pet on the rope (window stays
+  // put); unlocked = the window itself follows the mouse, so the pendulum must
+  // NOT also fling the pet sideways (that double control fought the cursor).
+  let positionUnlocked = false;
   let dragMoved = false;
   let suppressClick = false;
   let activePointerId = null;
   let pressX = 0, pressY = 0;
   let currentX = 0, currentY = 0;
+  // Cursor's horizontal position (window coords) during a drag; the locked tug
+  // spring tracks this directly so the pet visibly follows the mouse.
+  let dragTargetX = 0;
   let totalDrag = 0;
   let frameDt = 0.016;
   let lastClickTime = 0;
@@ -490,6 +498,575 @@
   let animOffY = 0;
   let clampAngle = 0.6;
 
+  /* Full elastic rope: a real spring-mass chain. cfg.segments springs hang from
+     a fixed anchor and the dangle rides the LAST node, so every section of the
+     cord stretches, compresses, bends and carries the wave on its own — the
+     whole rope is elastic, not just a spring bolted to the pet. Forces are SI
+     (N / kg / m per s^2) and reach pixels through PX_PER_M, which cancels to
+     a = (k/m) * offset_px, so the user-facing numbers behave as advertised.
+     Stiff segment springs need short fixed substeps (ELASTIC_DT), which is
+     still trivial next to a frame's budget at <=30 nodes. */
+  const PX_PER_M = 400;      // pixel scale applied to the user-facing SI parameters
+  const ELASTIC_DT = 1 / 2400;
+  /* Stability budget for the stiffest mode a distance-spring chain has (the
+     per-node checkerboard, which runs at 2x the single-segment frequency, so
+     omega*h = 2*sqrt(this)). Segment stiffness is capped to keep that inside
+     semi-implicit Euler's limit of 2; the cap is a safety net for the rigid +
+     many-segment corner, not the normal path. */
+  const STAB_TARGET = 0.2;
+  const MIN_SEG_RATIO = 0.45; // a segment may never squash below this share of its rest length
+  const COMPRESS_RATIO = 0.3; // rope buckles: it pushes back far more weakly than it pulls
+  const HARD_RAMP = 2;        // progressive stiffening approaching the stretch limit
+  /* Bending stiffness as a share of a segment spring. Distance springs alone
+     happily hold a folded zig-zag (a folded rope can have every segment at
+     exactly the right length), so the cord needs a real straightening term or it
+     visibly kinks at every node under a sideways pull. Tuned to the lowest
+     value that stays smooth from 4 to 30 segments; stiffness scales with
+     segment length because curvature, not offset, is what is resisted. */
+  const BEND_RATIO = 0.5;
+  const BEND_DAMP = 0.35;     // damping ratio of the bend springs
+  const NODE_MASS_FLOOR = 0.01; // keeps the wave integrable on very light ropes
+  const DRAG_OMEGA = 30;      // how hard the hand pulls the free end (rad/s)
+  const DRAG_AMAX = 90000;    // cap on the hand's acceleration (px/s^2)
+  let dragTargetY = 0;
+  let ropeThick = 1;
+
+  const PHYS = {
+    on: true,
+    cfg: {
+      elasticity: 50,       // stiffness of every segment
+      mass: 1,              // dangle mass
+      ropeMass: 0.5,        // mass of the rope itself, split across its nodes
+      segments: 12,         // number of springs in the cord
+      gravity: 9.81,
+      damping: 35,
+      maxStretch: 200,      // % of its rest length a single segment may reach
+      ropeSwing: true,
+      ropeBounce: true,
+      ropeBending: true,
+      ropeCompression: true
+    },
+    nodes: [],       // {x,y,vx,vy,ax,ay,m,fix}
+    restY: [],       // static hanging y per node (analytic, weighted by load)
+    restBend: [],    // that pose's deviation from the straight chord
+    restMaxRatio: 1, // worst segment's static stretch / rest, vs the stretch limit
+    restLen: 100     // total natural length of the cord
+  };
+  PHYS.defaultCfg = Object.assign({}, PHYS.cfg);
+
+  /* Elastic physics only performs in swing mode (it IS the swing mode's rig);
+     every other animation keeps its own offset-based hang. */
+  function physEnabledMode() { return baseAnim === 'swing' && currentAnim === 'swing'; }
+  function usingElasticRope() { return PHYS.on && physEnabledMode(); }
+
+  function physSegCount() {
+    const s = Math.round(PHYS.cfg.segments);
+    return isFinite(s) ? Math.max(4, Math.min(30, s)) : 12;
+  }
+  function physSegRest() { return PHYS.restLen / physSegCount(); }
+
+  function physK() {
+    /* Higher elasticity = softer rubber (more stretch per pull); 0 = near-rigid
+       cord. 2000 N/m at 0% down to 20 N/m at 100%, then scaled per segment
+       below.  a = (k/m) * over_px, so the numbers behave as advertised. */
+    return 2000 - (Math.max(0, Math.min(100, PHYS.cfg.elasticity)) / 100) * 1980;
+  }
+  function physRopeNodeMass() {
+    /* Rope mass shared out along the cord. The floor keeps the segment springs
+       integrable when a light rope is cut into many segments (a 0.5 kg cord in
+       30 pieces would otherwise want a wave far faster than any substep). */
+    return Math.max(NODE_MASS_FLOOR, Math.max(0.1, PHYS.cfg.ropeMass) / physSegCount());
+  }
+  function physNodeMass(i) {
+    const n = physSegCount();
+    if (i === 0) return 1;             // anchor: fixed, never integrated
+    if (i === n) return Math.max(0.1, PHYS.cfg.mass) + physRopeNodeMass();
+    return physRopeNodeMass();
+  }
+  /* Stiffness floor: a very soft cord under many segments stretches so far
+     under its own weight that it no longer fits in the window and gets crushed
+     against the bottom edge. The static hang is linear in 1/k, so the floor is
+     the k at which the sag exactly fills the space that is left over. */
+  function physKFitFloor() {
+    const n = physSegCount();
+    const restTotal = physSegRest() * n;
+    const maxHang = stage.clientHeight - petSize - 6;
+    if (!(maxHang > restTotal * 1.001)) return 0;
+    const g = physGravityPx();
+    if (g <= 0) return 0;
+    const mSeg = physRopeNodeMass();
+    let load = 0;
+    for (let i = 0; i < n; i++) load += physNodeMass(n) + mSeg * (n - i - 1);
+    return g * load / (maxHang - restTotal);
+  }
+  function physSegK() {
+    /* A chain of N springs in series is N times softer than one spring, so the
+       per-segment stiffness is scaled up to keep the whole-cord feel where the
+       single-spring rig had it. Then bounded on both sides: capped against the
+       substep so even a rigid 30-segment cord stays stable, and floored so a
+       very soft one still fits the window. */
+    const n = physSegCount();
+    const kMax = STAB_TARGET * physRopeNodeMass() / (ELASTIC_DT * ELASTIC_DT);
+    const want = physK() * n * 0.9;
+    return Math.min(Math.max(want, physKFitFloor()), kMax);
+  }
+  function physMaxSeg() {
+    /* The user's Maximum Stretch, but never tighter than the cord's own static
+       stretch under its own weight — a limit below that is not a limit, it is a
+       contradiction, and the cord would never come to rest. */
+    const want = 1 + (Math.max(100, Math.min(400, PHYS.cfg.maxStretch)) / 100 - 1);
+    const floor = (PHYS.restMaxRatio || 1) * 1.02;
+    return physSegRest() * Math.max(want, floor);
+  }
+  function physGravityPx() {
+    const g = PHYS.cfg.gravity * PX_PER_M;
+    return isFinite(g) && g >= 0 ? g : 0;
+  }
+  function physDampFrac() { return Math.max(0, Math.min(100, PHYS.cfg.damping)) / 100; }
+  function physDampRate() { return physDampFrac() * 6; }
+  function physSpringDamp() {
+    /* Axial (along-the-rope) damping: bleeds the high-frequency ring out of the
+       cord so waves decay, without deadening the slow overall swing. */
+    return physDampFrac() * 0.15 * Math.sqrt(physSegK() * physRopeNodeMass());
+  }
+  function physSag() {
+    /* Total static stretch of the cord from the dangle's weight — reported for
+       the debug snapshot; the per-node shape lives in physRestPose(). */
+    if (physGravityPx() <= 0) return 0;
+    return (physGravityPx() * Math.max(0.1, PHYS.cfg.mass)) / (physSegK() / physSegCount());
+  }
+
+  /* Static hanging shape. Segment i carries everything below it, so it rests
+     slightly longer than its natural length (stretch = weight/k): a real
+     hanging cord is a gentle curve, not a ruler-straight line. This is the pose
+     the rope falls asleep in and settles back to. */
+  function physRestPose() {
+    const n = physSegCount();
+    const seg = physSegRest();
+    const k = physSegK() || 1;
+    const g = physGravityPx();
+    const mSeg = physRopeNodeMass();
+    const restY = [];
+    const restBend = [];
+    let y = 0;
+    for (let i = 0; i <= n; i++) {
+      restY.push(y);
+      if (i < n) {
+        /* Everything hanging below segment i: the remaining rope nodes plus the
+           dangle that rides on the very last one. */
+        const below = physNodeMass(n) + mSeg * (n - i - 1);
+        y += seg + (g * below) / k;
+      }
+    }
+    /* Deviation of each interior node from its neighbours' midpoint at rest:
+       the bending springs restore this shape instead of a straight line, so
+       bending stiffness never fights the rope's own hanging curve. */
+    for (let i = 1; i < n; i++) {
+      restBend[i] = (restY[i - 1] + restY[i + 1]) * 0.5 - restY[i];
+    }
+    PHYS.restY = restY;
+    PHYS.restBend = restBend;
+    /* How much the cord's own weight stretches its worst-loaded segment at
+       rest. The Maximum Stretch limit can never be allowed to sit below this,
+       or the cord has no equilibrium to settle into and jitters against the cap
+       forever (e.g. Maximum Stretch 100% vs ~107% of gravity sag). */
+    let worst = 1;
+    for (let i = 0; i < n; i++) {
+      const len = restY[i + 1] - restY[i];
+      if (len / seg > worst) worst = len / seg;
+    }
+    PHYS.restMaxRatio = worst;
+    return restY;
+  }
+
+  /* (Re)build the node chain. When the segment count changes the old shape is
+     resampled onto the new node count, so the cord keeps its curve instead of
+     snapping straight. */
+  function physicsBuildNodes() {
+    const n = physSegCount();
+    const old = PHYS.nodes;
+    const oldN = old.length ? old.length - 1 : 0;
+    const restY = physRestPose();
+    const ax = ropeAnchorX();
+    const nodes = [];
+    for (let i = 0; i <= n; i++) {
+      const p = { x: ax, y: restY[i], vx: 0, vy: 0, ax: 0, ay: 0, m: 1, fix: i === 0 };
+      if (oldN > 0) {
+        /* resample the previous cord at t = i/n so a segment change is smooth */
+        const t = i / n;
+        const f = t * oldN;
+        const i0 = Math.min(oldN, Math.floor(f));
+        const i1 = Math.min(oldN, i0 + 1);
+        const w = f - i0;
+        p.x = old[i0].x + (old[i1].x - old[i0].x) * w;
+        p.y = old[i0].y + (old[i1].y - old[i0].y) * w;
+      }
+      nodes.push(p);
+    }
+    PHYS.nodes = nodes;
+  }
+
+  /* Park the whole cord on its static hanging curve. Called on init, on a rope
+     length change while everything is settled, and as the NaN rescue. */
+  function physicsSnapRest() {
+    const n = physSegCount();
+    if (PHYS.nodes.length !== n + 1) physicsBuildNodes();
+    const restY = physRestPose();
+    const ax = ropeAnchorX();
+    for (let i = 0; i <= n; i++) {
+      const p = PHYS.nodes[i];
+      p.x = ax;
+      p.y = restY[i];
+      p.vx = 0;
+      p.vy = 0;
+      p.ax = 0;
+      p.ay = 0;
+      p.m = physNodeMass(i);
+      p.fix = i === 0;
+    }
+  }
+
+  function physLastNode() { return PHYS.nodes[PHYS.nodes.length - 1]; }
+
+  /* Hand the cord back to the classic pendulum when physics turns off: derive
+     an equivalent angle from the free end's position so nothing visibly jumps. */
+  function physicsSyncToSwing() {
+    const last = physLastNode();
+    if (!last) return;
+    const dx = last.x - ropeAnchorX();
+    const dy = Math.max(1, last.y);
+    swingA = Math.max(-0.85, Math.min(0.85, Math.atan2(dx, dy)));
+    swingV = 0;
+    leanSmooth = swingA;
+    rotateSmooth = swingA * 180 / Math.PI;
+  }
+
+  /* Hard per-segment length limits, as positional constraints rather than very
+     stiff forces. A Gauss-Seidel pass like this is unconditionally stable, so
+     the cord can never exceed Maximum Stretch nor fold two nodes into each
+     other no matter what the sliders are set to — which is exactly the "no
+     unlimited compression, no unbounded stretch" requirement. Imposing it as
+     force instead needs a ~14x stiffer spring, which is past what a 30-node
+     chain's fastest transverse mode can integrate and detonates the cord. */
+  function projectLimits(passes) {
+    const n = physSegCount();
+    const nodes = PHYS.nodes;
+    if (nodes.length !== n + 1) return;
+    const seg = physSegRest();
+    const minD = seg * MIN_SEG_RATIO;
+    const maxD = physMaxSeg();
+    for (let pass = 0; pass < passes; pass++) {
+      for (let i = 0; i < n; i++) {
+        const a = nodes[i];
+        const b = nodes[i + 1];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 1e-6) { dx = 0; dy = 1e-3; d = 1e-3; }
+        let target = 0;
+        if (d > maxD) target = maxD;
+        else if (d < minD) target = minD;
+        if (!target) continue;
+        const wa = a.fix ? 0 : 1 / a.m;
+        const wb = b.fix ? 0 : 1 / b.m;
+        const wsum = wa + wb;
+        if (wsum <= 0) continue;
+        const ux = dx / d, uy = dy / d;
+        const c = (d - target) / d;
+        a.x += dx * c * (wa / wsum);
+        a.y += dy * c * (wa / wsum);
+        b.x -= dx * c * (wb / wsum);
+        b.y -= dy * c * (wb / wsum);
+        /* Drop the velocity that drove it past the limit, otherwise the cord
+           bounces off the stop forever. */
+        const rv = (b.vx - a.vx) * ux + (b.vy - a.vy) * uy;
+        const over = d > maxD ? rv : -rv;
+        if (over > 0) {
+          if (!a.fix) { a.vx += ux * rv * (wa / wsum); a.vy += uy * rv * (wa / wsum); }
+          if (!b.fix) { b.vx -= ux * rv * (wb / wsum); b.vy -= uy * rv * (wb / wsum); }
+        }
+      }
+    }
+  }
+
+  /* One fixed 1/960 s substep of the whole cord:
+       - gravity on every dynamic node (the anchor stays fixed)
+       - one spring per segment, applied to BOTH connected nodes
+       - optional compression push (buckling rope) with a minimum segment length
+       - optional bending springs that hold the cord's hanging shape
+       - the hand pulls only the free end; the wave travels up on its own
+     Semi-implicit Euler, so energy is conserved well and it stays stable at
+     60 Hz and 144 Hz alike. */
+  function updateElasticPhysics(h) {
+    if (!usingElasticRope()) return;
+    const n = physSegCount();
+    if (PHYS.nodes.length !== n + 1) { physicsBuildNodes(); physSnapRest(); return; }
+    const nodes = PHYS.nodes;
+    const seg = physSegRest();
+    const maxSeg = physMaxSeg();
+    const kSeg = physSegK();
+    const gPx = physGravityPx();
+    const ax = ropeAnchorX();
+    const last = nodes[n];
+    const mLast = physNodeMass(n);
+    const dampFrac = physDampFrac();
+    const damp = physDampRate();
+    const cs = physSpringDamp();
+    const minSeg = seg * MIN_SEG_RATIO;
+    const pushK = kSeg * COMPRESS_RATIO;
+
+    /* Anchor is a hard pin: it is the one node no force can move. */
+    nodes[0].x = ax;
+    nodes[0].y = 0;
+    /* Gravity + force accumulator reset. */
+    for (let i = 1; i <= n; i++) {
+      const p = nodes[i];
+      p.m = physNodeMass(i);
+      p.ax = 0;
+      p.ay = gPx;
+    }
+
+    /* Segment springs. Force is equal and opposite on both nodes, so a pull at
+       the bottom travels the whole cord instead of only stretching the end. */
+    for (let i = 0; i < n; i++) {
+      const a = nodes[i];
+      const b = nodes[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1e-4;
+      const ux = dx / d;
+      const uy = dy / d;
+      const stretch = d - seg;
+      let f = 0;
+      if (stretch > 0) {
+        /* Tension. A soft linear spring carries the elastic feel; a gentle
+           progressive ramp near the limit keeps the cord from feeling like it
+           hits a wall. The hard limit itself is a positional projection (see
+           projectLimits) — doing it with force alone needs a ~14x stiffer
+           spring, which is past what the stiffest transverse mode can integrate
+           and blows the cord apart. */
+        const t = Math.min(1, stretch / Math.max(1e-4, maxSeg - seg));
+        f = kSeg * stretch * (1 + HARD_RAMP * t * t);
+      } else if (PHYS.cfg.ropeCompression) {
+        /* Buckling rope: a weak push, not a mirror of the tension spring. */
+        f = pushK * stretch;
+      }
+      /* Axial damping. The pair is pulled together with force u*f on a and
+         -u*f on b, so the power the damper puts in is -f*(v_b-v_a)·u: a POSITIVE
+         f term is what makes it dissipative. (Getting this sign backwards turns
+         the damper into an energy source and the cord never stops vibrating.) */
+      f += cs * ((b.vx - a.vx) * ux + (b.vy - a.vy) * uy);
+      /* f > 0 is tension: each node is pulled TOWARD the other, equal and
+         opposite, so the pair is a real spring and momentum is conserved. */
+      if (!a.fix) { a.ax += ux * f / a.m; a.ay += uy * f / a.m; }
+      if (!b.fix) { b.ax -= ux * f / b.m; b.ay -= uy * f / b.m; }
+    }
+
+    /* Bending. Distance springs alone cannot tell a taut rope from one folded
+       into a zig-zag (a folded rope can have every segment at exactly the right
+       length), so each interior node is sprung back toward the curve its
+       neighbours describe. The reaction is shared with those neighbours, which
+       keeps the net force at zero — a force on one node alone would inject
+       energy and rattle the cord. */
+    if (PHYS.cfg.ropeBending) {
+      const restBend = PHYS.restBend;
+      const kB = kSeg * BEND_RATIO;
+      /* Bending damper, scaled off the Damping slider like everything else.
+         Without it the transverse zig-zag mode — the fastest mode a distance-
+         spring chain has, and the one bending barely resists — rings on almost
+         forever and the cord never goes to sleep. */
+      const cb = BEND_DAMP * dampFrac * 2 * Math.sqrt(kB * physRopeNodeMass());
+      for (let i = 1; i < n; i++) {
+        const p = nodes[i];
+        const l = nodes[i - 1];
+        const r = nodes[i + 1];
+        const ex = (l.x + r.x) * 0.5 - p.x;
+        const ey = (l.y + r.y) * 0.5 - p.y - (restBend[i] || 0);
+        const rvx = (l.vx + r.vx) * 0.5 - p.vx;
+        const rvy = (l.vy + r.vy) * 0.5 - p.vy;
+        const bx = kB * ex + cb * rvx;
+        const by = kB * ey + cb * rvy;
+        p.ax += bx / p.m;
+        p.ay += by / p.m;
+        if (!l.fix) { l.ax -= bx * 0.5 / l.m; l.ay -= by * 0.5 / l.m; }
+        if (!r.fix) { r.ax -= bx * 0.5 / r.m; r.ay -= by * 0.5 / r.m; }
+      }
+    }
+
+    if (positionUnlocked && isDragging) {
+      /* Unlocked dragging: the window itself carries the pet under the cursor,
+         so the cord must sit still relative to the window (mirrors the classic
+         swing's freeze) — just kill momentum, add nothing. */
+      for (let i = 1; i <= n; i++) {
+        nodes[i].vx *= Math.exp(-8 * h);
+        nodes[i].vy *= Math.exp(-8 * h);
+      }
+    } else if (isDragging) {
+      /* The hand grabs only the free end and pulls it toward the cursor with a
+         critically-damped follower. The rest of the cord is never teleported:
+         the pull travels up through the segment springs, which is what makes
+         the elastic wave visible. Mass scales the follow, so a heavy dangle is
+         genuinely sluggish. */
+      const kd = mLast * DRAG_OMEGA * DRAG_OMEGA;
+      let fx = kd * (dragTargetX - last.x);
+      let fy = kd * (dragTargetY - last.y);
+      const am = Math.sqrt(fx * fx + fy * fy);
+      if (am > DRAG_AMAX) { fx = fx / am * DRAG_AMAX; fy = fy / am * DRAG_AMAX; }
+      last.ax += fx / mLast;
+      last.ay += fy / mLast;
+      last.vx *= Math.exp(-2 * h);
+      last.vy *= Math.exp(-2 * h);
+    } else if (!PHYS.cfg.ropeSwing) {
+      /* "Rope swing" off = vertical rubber band: the cord may only stretch and
+         bounce up and down, never swing sideways. Every node is re-centered on
+         the anchor (weighted toward the tip, which carries the most mass), so
+         the whole rope hangs plumb instead of just straightening at the end. */
+      for (let i = 1; i <= n; i++) {
+        const p = nodes[i];
+        const w = (i / n) * (i / n);
+        p.ax += (ax - p.x) * (600 * w / p.m);
+        p.vx *= Math.exp(-3 * h);
+      }
+    }
+
+    /* Integrate, keep every node inside the window, then enforce the hard
+       per-segment limits (after the move, so the bounds always win). */
+    const dmp = damp > 0 ? Math.exp(-damp * h) : 1;
+    const W = stage.clientWidth;
+    const H = stage.clientHeight;
+    const minX = petSize * 0.5;
+    const maxX = W - petSize * 0.5;
+    const minY = petSize * 0.15;
+    const maxY = H - petSize;
+    const rb = PHYS.cfg.ropeBounce ? -0.35 : 0;
+    for (let i = 1; i <= n; i++) {
+      const p = nodes[i];
+      p.vx = (p.vx + p.ax * h) * dmp;
+      p.vy = (p.vy + p.ay * h) * dmp;
+      const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+      if (sp > 2500) { const s = 2500 / sp; p.vx *= s; p.vy *= s; }
+      p.x += p.vx * h;
+      p.y += p.vy * h;
+      /* Defense against pathologically long frames (debugger paused, sleep,
+         window drag): a mismatched accumulator can't produce NaN physics. */
+      if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.vx) || !isFinite(p.vy)) {
+        physicsSnapRest();
+        return;
+      }
+      if (i === n) {
+        /* The dangle must never clip the transparent window edge. Hard stop
+           (ropeBounce off) or a soft -0.35 reflection. */
+        if (p.x < minX) { p.x = minX; if (p.vx < 0) p.vx *= rb; }
+        else if (p.x > maxX) { p.x = maxX; if (p.vx > 0) p.vx *= rb; }
+        if (p.y < minY) { p.y = minY; if (p.vy < 0) p.vy *= rb; }
+        else if (p.y > maxY) { p.y = maxY; if (p.vy > 0) p.vy *= rb; }
+      } else {
+        /* Interior nodes only need to stay on screen. */
+        if (p.x < 0) p.x = 0; else if (p.x > W) p.x = W;
+        if (p.y < 0) p.y = 0; else if (p.y > H) p.y = H;
+      }
+    }
+    /* Hard Maximum Stretch / minimum link length, applied last so the bounds
+       always win over the soft springs. */
+    projectLimits(2);
+
+    /* Kill micro-drift at the rest curve so the cord can go back to sleep.
+       Thresholds are "imperceptible", not "exact": at 2.5 px/s the tip moves
+       0.04 px per frame, so snapping here is invisible, and waiting for a
+       perfect analytic rest would leave the solver running for many seconds
+       after every flick. */
+    if (!isDragging) {
+      const restY = PHYS.restY;
+      let still = true;
+      for (let i = 1; i <= n; i++) {
+        const p = nodes[i];
+        if (Math.abs(p.x - ax) > 2 || Math.abs(p.y - restY[i]) > 2 ||
+            Math.abs(p.vx) > 2.5 || Math.abs(p.vy) > 2.5) { still = false; break; }
+      }
+      if (still) physicsSnapRest();
+    }
+  }
+
+  /* Total cord length and the mean segment stretch right now — used to draw
+     the rope a touch thinner while it is stretched, like real elastic cord. */
+  function physRopeShape() {
+    const n = physSegCount();
+    const nodes = PHYS.nodes;
+    if (nodes.length !== n + 1) return { total: PHYS.restLen, ratio: 1 };
+    const seg = physSegRest();
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const a = nodes[i];
+      const b = nodes[i + 1];
+      total += Math.sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+    }
+    return { total: total, ratio: seg > 0 ? total / (seg * n) : 1 };
+  }
+
+  /* Apply a config blob from the settings panel (or persistence on launch).
+     Sanitizing matches the main-process sanitize, so either side staying in
+     range is guaranteed no matter who sends. */
+  function setPhysicsFromIPC(cfg) {
+    if (!cfg || typeof cfg !== 'object') return;
+    const onWas = PHYS.on;
+    const segsWas = physSegCount();
+    PHYS.cfg.elasticity = Number.isFinite(cfg.elasticity)
+      ? Math.max(0, Math.min(100, cfg.elasticity)) : PHYS.cfg.elasticity;
+    PHYS.cfg.mass = Number.isFinite(cfg.mass)
+      ? Math.max(0.1, Math.min(10, cfg.mass)) : PHYS.cfg.mass;
+    PHYS.cfg.ropeMass = Number.isFinite(cfg.ropeMass)
+      ? Math.max(0.1, Math.min(2, cfg.ropeMass)) : PHYS.cfg.ropeMass;
+    PHYS.cfg.segments = Number.isFinite(cfg.segments)
+      ? Math.max(4, Math.min(30, Math.round(cfg.segments))) : PHYS.cfg.segments;
+    PHYS.cfg.gravity = Number.isFinite(cfg.gravity)
+      ? Math.max(0, Math.min(30, cfg.gravity)) : PHYS.cfg.gravity;
+    PHYS.cfg.damping = Number.isFinite(cfg.damping)
+      ? Math.max(0, Math.min(100, cfg.damping)) : PHYS.cfg.damping;
+    PHYS.cfg.maxStretch = Number.isFinite(cfg.maxStretch)
+      ? Math.max(100, Math.min(400, cfg.maxStretch)) : PHYS.cfg.maxStretch;
+    PHYS.cfg.ropeSwing = cfg.ropeSwing === undefined ? PHYS.cfg.ropeSwing : !!cfg.ropeSwing;
+    PHYS.cfg.ropeBounce = cfg.ropeBounce === undefined ? PHYS.cfg.ropeBounce : !!cfg.ropeBounce;
+    PHYS.cfg.ropeBending = cfg.ropeBending === undefined ? PHYS.cfg.ropeBending : !!cfg.ropeBending;
+    PHYS.cfg.ropeCompression = cfg.ropeCompression === undefined
+      ? PHYS.cfg.ropeCompression : !!cfg.ropeCompression;
+    if (typeof cfg.enabled === 'boolean') PHYS.on = cfg.enabled;
+
+    /* Enable: adopt the rope's current free end as the cord's starting point so
+       switching feels instant. Disable: hand the cord home to the pendulum in a
+       visually identical pose. */
+    if (PHYS.on && !onWas) {
+      const L = Math.max(1, ropeSegLen * ropeCfg.segs);
+      const nx = ropeAnchorX() + Math.sin(swingA) * L;
+      const ny = Math.max(petSize * 0.15, L * Math.cos(swingA));
+      const n = physSegCount();
+      if (PHYS.nodes.length !== n + 1) physicsBuildNodes();
+      /* lay the fresh cord out along the pendulum pose it is taking over from */
+      for (let i = 0; i <= n; i++) {
+        const t = i / n;
+        const p = PHYS.nodes[i];
+        p.x = ropeAnchorX() + (nx - ropeAnchorX()) * t;
+        p.y = ny * t;
+        p.vx = 0;
+        p.vy = 0;
+      }
+    } else if (!PHYS.on && onWas) {
+      physicsSyncToSwing();
+    }
+    /* Segment count or any stiffness/mass change moves the static pose, so
+       refresh it; a cord already in motion simply relaxes to the new shape. */
+    if (physSegCount() !== segsWas) physicsBuildNodes();
+    physRestPose();
+    wakeRope();
+  }
+
+  function physicsResetConfig() {
+    PHYS.cfg = Object.assign({}, PHYS.defaultCfg);
+    PHYS.on = true;
+    physicsBuildNodes();
+    physicsSnapRest();
+    wakeRope();
+  }
+
   /* Maximum swing angle that keeps the pet fully inside the window. Beyond
      it the pet would clip through the transparent window's edge. */
   function swingClampA() {
@@ -499,33 +1076,61 @@
     return Math.min(0.85, Math.asin(Math.min(1, half / L)));
   }
 
-  /* Smooth damped pendulum for the "swing" mode. The rope's free end follows it,
-     so the pet sways on a slow, predictable arc instead of the rope solver's
-     stiff micro-vibrations. A physically-correct longer rope sways a touch
-     slower, keeping the swing natural whatever the rope length.
-     While dragging, a stiff target-spring leans the pet against the drag
-     direction, so it dangles behind the cursor and swings out on release. */
+/* Smooth damped pendulum for the "swing" mode. The rope's free end follows it,
+      so the pet sways on a slow, predictable arc instead of the rope solver's
+      stiff micro-vibrations. A physically-correct longer rope sways a touch
+      slower, keeping the swing natural whatever the rope length.
+      While dragging, a stiff target-spring leans the pet against the drag
+      direction, so it dangles behind the cursor and swings out on release. */
   function updateSwing(dt) {
     if (baseAnim !== 'swing' || currentAnim !== 'swing') return;
     const L = Math.max(1, ropeSegLen * ropeCfg.segs);
     if (isDragging) {
-      /* Low-pass the lean target first: raw cursor velocity is noisy at
-         pointer-event rate, and feeding it straight into the spring makes the
-         pet shiver. The filter keeps one clean, continuous trailing motion. */
+      /* UNLOCKED drag: the main process moves the window under the cursor, so
+         the only thing this branch must NOT do is also fling the pet sideways —
+         that double control made the pet fight the mouse. Freeze the pendulum
+         exactly where it was grabbed and damp any leftover motion; the window
+         carries the pet and the rope takes the slack naturally. */
+      if (positionUnlocked) {
+        swingV *= Math.exp(-12 * dt);
+        return;
+      }
+      /* LOCKED drag ("tug"): the anchor stays put, so the pet follows the
+         cursor's horizontal POSITION (window coords), clamped to the safe arc.
+         Position-based tracking reads far more alive than a velocity probe:
+         a real mouse swipe moves the cursor tens of pixels instantly while
+         smoothed velocity lags, which made the tug feel dead. The stiff spring
+         leans the pet toward that target and genuinely stores momentum, so on
+         release it hands continuous velocity to the pendulum. */
       const Amax = clampAngle;
-      const raw = Math.max(-Amax, Math.min(Amax, -dragVelX / 1400));
-      leanSmooth += (raw - leanSmooth) * Math.min(1, 16 * dt);
-      swingV += (leanSmooth - swingA) * 120 * dt;
-      swingV *= Math.exp(-6 * dt);
+      const Lx = Math.max(1, L * Math.sin(Amax));
+      const offX = Math.max(-Lx, Math.min(Lx, dragTargetX - stage.clientWidth / 2));
+      const target = Math.asin(offX / L);
+      leanSmooth += (target - leanSmooth) * Math.min(1, 22 * dt);
+      swingV += (leanSmooth - swingA) * 150 * dt;
+      swingV *= Math.exp(-3 * dt);
       swingA += swingV * dt;
+      /* The free-run bounce only runs after release, so the tug spring could
+         push the pet past the window-safe angle on a hard pull, clipping the
+         window edge. Soft pin at the arc like the free soft-bounce (retain a
+         little energy) so a hard tug doesn't die at the wall — translate the
+         tail, keep the motion. */
+      if (swingA > Amax) { swingA = Amax; if (swingV > 0) swingV = -swingV * 0.35; }
+      else if (swingA < -Amax) { swingA = -Amax; if (swingV < 0) swingV = -swingV * 0.35; }
       return;
     }
-    const om = (2 * Math.PI / 1.5) * Math.sqrt(224 / L) * Math.sqrt(speed);
-    swingV += (-om * om * swingA) * dt;
-    /* Energy tuned from measured on-screen motion (a flick that starts at
-       ~90px sways down through ~20px by the second period and is basically at
-       rest in 3-4 seconds) — visible natural damping without a sluggish drag. */
-    swingV *= Math.exp(-1.0 * dt);
+    /* Real pendulum: torque from gravity acting on a real (pixel) rope length.
+       -sin(angle) keeps large arcs naturally smooth (longer period toward the
+       top of the stroke), and the exponential velocity damping lets it settle
+       after a few periods instead of stopping dead. */
+    const G = 3200; // px/s^2 of gravity on this pixel-length rope
+    const om2 = (G / L) * speed; // speed slider scales the swing cadence only
+    swingV += (-om2 * Math.sin(swingA)) * dt;
+    /* Damping tuned from measured on-screen motion: a flick that starts at
+       ~90px sways down through ~25px one period later and is basically at rest
+       after 3-4 periods (roughly 6 seconds) — visible natural settling without
+       a sluggish, dead-feeling drag. */
+    swingV *= Math.exp(-0.8 * dt);
     swingA += swingV * dt;
     /* Soft bounce at the window-safe angle: the rope goes slack briefly and
        the pet drifts back in instead of the velocity snapping to zero (which
@@ -577,12 +1182,102 @@
      animation's own offset. The pet rig, the knot and the rope path all derive
      from this one point, so nothing ever drifts out of sync. */
   function ropeAttach() {
+    if (usingElasticRope()) {
+      const last = physLastNode();
+      if (last) return { x: last.x, y: last.y };
+    }
     if (baseAnim === 'swing' && currentAnim === 'swing') {
       const L = ropeSegLen * ropeCfg.segs;
       return { x: ropeAnchorX() + Math.sin(swingA) * L, y: L * Math.cos(swingA) };
     }
     return { x: ropeAnchorX() + animOffX, y: petHangY() + animOffY };
   }
+
+  /* Debug snapshot: one read-only getter exposing the authoritative
+     interaction + physics state (interactionMode, drag state, pendulum state,
+     rope geometry) to the development test harness. Kept because it is read-
+     only and costs nothing when unused. */
+  window.__rdDebug = () => JSON.stringify({
+    mode: document.body.classList.contains('clickthrough')
+      ? 'click-through'
+      : (isDragging ? 'dragging' : 'interactive'),
+    isDragging,
+    positionUnlocked,
+    ropeTicking,
+    touchState,
+    ctHoverActive,
+    swingA: +swingA.toFixed(4),
+    swingV: +swingV.toFixed(4),
+    leanSmooth: +leanSmooth.toFixed(3),
+    dragVelX: +dragVelX.toFixed(1),
+    l: +(ropeSegLen * ropeCfg.segs).toFixed(1),
+    anim: currentAnim,
+    base: baseAnim,
+    at: { x: +ropeAttach().x.toFixed(1), y: +ropeAttach().y.toFixed(1) },
+    petSize,
+    ropePct: ropeLengthPct,
+    clamp: +swingClampA().toFixed(3),
+    elastic: usingElasticRope(),
+    physics: {
+      on: PHYS.on,
+      elasticity: PHYS.cfg.elasticity,
+      mass: PHYS.cfg.mass,
+      ropeMass: PHYS.cfg.ropeMass,
+      segments: physSegCount(),
+      gravity: PHYS.cfg.gravity,
+      damping: PHYS.cfg.damping,
+      maxStretch: PHYS.cfg.maxStretch,
+      ropeSwing: PHYS.cfg.ropeSwing,
+      ropeBounce: PHYS.cfg.ropeBounce,
+      ropeBending: PHYS.cfg.ropeBending,
+      ropeCompression: PHYS.cfg.ropeCompression,
+      restLen: +PHYS.restLen.toFixed(1),
+      segRest: +physSegRest().toFixed(2),
+      sag: +physSag().toFixed(1),
+      shape: physRopeShape(),
+      /* every node's position + its own segment stretch: the proof that the
+         whole cord deforms, not just the bottom link */
+      nodes: PHYS.nodes.map((p, i) => {
+        const q = PHYS.nodes[i - 1];
+        const d = q
+          ? Math.sqrt((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y))
+          : 0;
+        return [+p.x.toFixed(1), +p.y.toFixed(1), i ? +(d / physSegRest()).toFixed(3) : 0];
+      })
+    }
+  });
+
+  /* Test/inspection hook: lets the harness read the live cord and step the
+     solver deterministically instead of guessing from pixels. */
+  window.__rdPhys = {
+    PHYS: PHYS,
+    step: updateElasticPhysics,
+    snap: physicsSnapRest,
+    build: physicsBuildNodes,
+    rest: physRestPose,
+    drag: { on: function (v) { isDragging = v; }, x: function (v) { dragTargetX = v; }, y: function (v) { dragTargetY = v; } },
+    derived: function () {
+      return {
+        segRest: physSegRest(),
+        k: physK(),
+        kSeg: physSegK(),
+        kSegWanted: physK() * physSegCount() * 0.9,
+        clampBinding: physSegK() < physK() * physSegCount() * 0.9 - 1,
+        gPx: physGravityPx(),
+        nodeMass: physRopeNodeMass(),
+        lastMass: physNodeMass(physSegCount()),
+        minSeg: physSegRest() * MIN_SEG_RATIO,
+        maxSeg: physMaxSeg(),
+        maxSegRatio: +(physMaxSeg() / physSegRest()).toFixed(3),
+        restMaxRatio: +(PHYS.restMaxRatio || 1).toFixed(3),
+        cs: physSpringDamp(),
+        dt: ELASTIC_DT,
+        segStability: Math.sqrt(physSegK() / physNodeMass(1)) * ELASTIC_DT,
+        /* fastest transverse mode of the chain (checkerboard) */
+        bendStability: Math.sqrt(physSegK() * BEND_RATIO / physNodeMass(1)) * ELASTIC_DT,        stage: { w: stage.clientWidth, h: stage.clientHeight, anchor: ropeAnchorX() }
+      };
+    }
+  };
 
   /* (re)build the segments. Anchor pinned at the top-center; the rope's rest
      length reaches from the top down to just above where the pet hangs, so the
@@ -597,6 +1292,22 @@
     const rest = Math.min(maxLen, Math.max(60, baseRest * (ropeLengthPct / 100)));
     ropeSegLen = Math.max(1.5, rest / n);
     linkLen = ropeSegLen * (ropeCfg.stretch || 1);
+    PHYS.restLen = rest;
+    /* Park the cord on its static hanging curve when nothing is happening;
+       mid-motion it keeps its own shape so the rope just re-settles. */
+    if (PHYS.on && physEnabledMode()) {
+      let settled = PHYS.nodes.length > 0;
+      for (let i = 0; i < PHYS.nodes.length; i++) {
+        const p = PHYS.nodes[i];
+        if (Math.abs(p.vx) + Math.abs(p.vy) >= 5) { settled = false; break; }
+      }
+      if (settled) {
+        physicsBuildNodes();
+        physicsSnapRest();
+      } else {
+        physRestPose();
+      }
+    }
     ropeEl.setAttribute('width', stage.clientWidth);
     ropeEl.setAttribute('height', H);
     ropePts = []; ropePrev = [];
@@ -613,8 +1324,21 @@
      PHYS_DT intervals, which keeps damping and gravity frame-rate independent.
      The speed slider drives the animations, not the rope's own physics. */
   function stepRope(h) {
+    if (usingElasticRope()) return;   // the spring-mass cord IS the rope now
     const n = ropeCfg.segs;
-    const g = ROPE_GRAV * ropeCfg.grav * h * h;
+    /* While dragging the rope is pulled between two controlled ends (anchor +
+       pet), so it should read as a taut line, not a sagging chain: near-zero
+       sag + extra constraint iterations keep it straight through fast window
+       yanks instead of bowing and blurring the swing. */
+    const iters = isDragging ? Math.max(ropeCfg.iters, 7) : ropeCfg.iters;
+    /* The drawn chain follows the bob's spring rig, so its sag matches the
+       user's gravity setting (clamped to a sane range so the link solver never
+       buckles: 3924 px/s^2 = Earth 9.81 m/s^2 at PX_PER_M). */
+    let gravScale = 1;
+    if (usingElasticRope()) {
+      gravScale = Math.max(0.05, Math.min(3, physGravityPx() / 3924));
+    }
+    const g = ROPE_GRAV * ropeCfg.grav * (isDragging ? 0.12 : 1) * gravScale * h * h;
     const ax = ropeAnchorX();
     for (let i = 1; i <= n; i++) {
       const p = ropePts[i];
@@ -627,7 +1351,7 @@
     }
     ropePts[0].x = ax;
     ropePts[0].y = 0;
-    for (let iter = 0; iter < ropeCfg.iters; iter++) {
+    for (let iter = 0; iter < iters; iter++) {
       for (let i = 1; i <= n; i++) {
         const a = ropePts[i - 1];
         const b = ropePts[i];
@@ -650,12 +1374,55 @@
     }
   }
 
+  /* One continuous cord through the physics nodes: Catmull-Rom converted to
+     cubic Beziers, so the curve passes exactly through every node (no gap at
+     the pet) while the rope itself still reads as a single smooth line. */
+  function elasticRopePath() {
+    const n = physSegCount();
+    const p = PHYS.nodes;
+    if (p.length < 2) return '';
+    let d = 'M ' + p[0].x.toFixed(1) + ' ' + p[0].y.toFixed(1);
+    for (let i = 0; i < n; i++) {
+      const p0 = p[i - 1] || p[0];
+      const p1 = p[i];
+      const p2 = p[i + 1];
+      const p3 = p[i + 2] || p2;
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      d += ' C ' + c1x.toFixed(1) + ' ' + c1y.toFixed(1) + ' ' +
+        c2x.toFixed(1) + ' ' + c2y.toFixed(1) + ' ' +
+        p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+    }
+    return d;
+  }
+
   function drawRope() {
     const n = ropeCfg.segs;
     const at = ropeAttach();
     const cx = ropeAnchorX();
 
-    if (baseAnim === 'swing' && currentAnim === 'swing') {
+    if (usingElasticRope()) {
+      /* Elastic cord: the pet rides the last NODE, and leans with the direction
+         of the bottom segment (what the rope actually points at), so a stretch
+         or an overhang rotates the pet exactly like the cord does. */
+      const nEl = physSegCount();
+      const last = physLastNode();
+      const prev = PHYS.nodes[nEl - 1];
+      const segDx = last && prev ? last.x - prev.x : 0;
+      const segDy = last && prev ? last.y - prev.y : 1;
+      const targetDeg = Math.atan2(segDx, Math.max(1, segDy)) * 180 / Math.PI;
+      const rotK = 1 - Math.pow(1 - 0.6, Math.max(0.001, frameDt) * 60);
+      rotateSmooth += (targetDeg - rotateSmooth) * rotK;
+      petRig.style.transform =
+        'translate(' + (at.x - petSize / 2).toFixed(1) + 'px,' + at.y.toFixed(1) + 'px)' +
+        ' rotate(' + rotateSmooth.toFixed(2) + 'deg)';
+      const starget = (at.x - cx) * 0.6;
+      const shK = 1 - Math.pow(1 - 0.3, Math.max(0.001, frameDt) * 60);
+      shadowSmooth += (starget - shadowSmooth) * shK;
+      groundShadow.style.transform = 'translateX(calc(-50% + ' + shadowSmooth.toFixed(1) + 'px))';
+    } else if (baseAnim === 'swing' && currentAnim === 'swing') {
       /* The pet hangs ON the rope end: its top-center sits exactly on the tail
          and the pendulum angle drives the swing. The rig carries this transform
          so interaction animations (bounce, jump...) compose on top of it. */
@@ -683,6 +1450,21 @@
 
     knotEl.style.left = at.x + 'px';
     knotEl.style.top = at.y + 'px';
+
+    if (usingElasticRope()) {
+      /* The cord is drawn as ONE smooth curve through the physics nodes
+         (Catmull-Rom expressed as cubic Beziers), so the internal nodes never
+         read as separate segments, and it thins out slightly while stretched
+         the way real elastic cord does. */
+      const shape = physRopeShape();
+      const targetThick = Math.max(0.62, Math.min(1.3, 1 / Math.max(0.5, shape.ratio)));
+      const tK = 1 - Math.pow(1 - 0.15, Math.max(0.001, frameDt) * 60);
+      ropeThick += (targetThick - ropeThick) * tK;
+      stage.style.setProperty('--rope-thick', ropeThick.toFixed(3));
+      ropePath.setAttribute('d', elasticRopePath());
+      ropePath2.setAttribute('d', ropePath.getAttribute('d'));
+      return;
+    }
 
     let d = 'M ' + ropePts[0].x.toFixed(1) + ' ' + ropePts[0].y.toFixed(1);
     for (let i = 1; i < n; i++) {
@@ -721,27 +1503,53 @@
        instead of reading clientWidth inside every 240 Hz substep. */
     clampAngle = swingClampA();
     const n = ropeCfg.segs;
+    /* The elastic cord runs at a shorter substep than the classic rope: its
+       segment springs are far stiffer, and this is what keeps the wave stable
+       and identical on 60 Hz and 144 Hz displays. */
+    const sub = usingElasticRope() ? ELASTIC_DT : PHYS_DT;
     physAcc = Math.min(0.25, physAcc + dt);
-    while (physAcc >= PHYS_DT) {
-      updateSwing(PHYS_DT);
-      stepRope(PHYS_DT);
-      /* Pin the rope's free end exactly where the pet hangs (anchor is the
-         window-top center). One source of truth for rig, knot and rope path,
-         applied every substep, so the rope never lags a frame behind the pet,
-         never stretches and never opens a gap — while dragging too. */
-      const at = ropeAttach();
-      ropePts[n].x = at.x;
-      ropePts[n].y = at.y;
-      physAcc -= PHYS_DT;
+    /* Cap the catch-up work per frame. A long stall (debugger, sleep, a window
+       drag) must not turn into hundreds of substeps of physics in one frame. */
+    let budget = usingElasticRope() ? 160 : 64;
+    while (physAcc >= sub && budget-- > 0) {
+      if (usingElasticRope()) {
+        updateElasticPhysics(sub);
+      } else {
+        updateSwing(sub);
+        /* Pin the rope's free end exactly where the pet hangs (anchor is the
+           window-top center). One source of truth for rig, knot and rope path,
+           applied every substep, so the rope never lags a frame behind the pet,
+           never stretches and never opens a gap — while dragging too. */
+        stepRope(sub);
+        const at = ropeAttach();
+        ropePts[n].x = at.x;
+        ropePts[n].y = at.y;
+      }
+      physAcc -= sub;
     }
+    if (physAcc > sub) physAcc = 0;   /* ran out of budget: drop the backlog */
     drawRope();
     if (isDragging) {
       ropeStill = 0;
     } else {
-      const spd = Math.hypot(ropePts[n].x - ropePrev[n].x, ropePts[n].y - ropePrev[n].y);
-      const swinging = Math.abs(swingA) > 0.004 || Math.abs(swingV) > 0.02;
-      if (spd < 0.07 && !swinging) {
-        if (++ropeStill > 80) { ropeStill = 0; ropeTicking = false; return; }
+      let spd, swinging;
+      if (usingElasticRope()) {
+        /* "Still" means every node of the cord is at rest, not just the end.
+           6 px/s is ~0.1 px per frame — below what the eye can pick up. */
+        spd = 0;
+        swinging = false;
+        for (let i = 1; i < PHYS.nodes.length; i++) {
+          const p = PHYS.nodes[i];
+          const s = Math.abs(p.vx) + Math.abs(p.vy);
+          if (s > spd) spd = s;
+          if (s > 6) swinging = true;
+        }
+      } else {
+        spd = Math.hypot(ropePts[n].x - ropePrev[n].x, ropePts[n].y - ropePrev[n].y);
+        swinging = Math.abs(swingA) > 0.004 || Math.abs(swingV) > 0.02;
+      }
+      if (spd < 3 && !swinging) {
+        if (++ropeStill > 40) { ropeStill = 0; ropeTicking = false; return; }
       } else {
         ropeStill = 0;
       }
@@ -991,6 +1799,19 @@
   // disables click-through so it can be grabbed/pushed/pulled, re-enabling when the cursor leaves.
   let touchState = false;
   let ctHoverActive = false;
+  let lastMouseX = 0, lastMouseY = 0;
+  function hoverAt(x, y) {
+    const s = stage.getBoundingClientRect();
+    const p = petContainer.getBoundingClientRect();
+    const cx = s.left + s.width / 2;
+    const m = ctHoverActive ? 12 : 0;
+    const onPet = x >= p.left - m && x <= p.right + m &&
+                  y >= p.top - m && y <= p.bottom + 10 + m;
+    const onRope = !onPet && y < p.top &&
+                   y >= s.top - m &&
+                   Math.abs(x - cx) <= 16 + m;
+    return onPet || onRope;
+  }
   function setTouchState(v) {
     if (v === touchState || !document.body.classList.contains('clickthrough')) return;
     touchState = v;
@@ -1009,27 +1830,24 @@
       petContainer.classList.remove('dragging');
       setAnim(baseAnim);
       touchState = false;
-      api.send('set-mouse-over-pet', false);
+      /* Re-grab instantly if the cursor is already sitting on the pet, so
+         toggling click-through on never leaves the pet unreachably ignoring
+         input until the next mouse move — switching feels immediate. */
+      const over = hoverAt(lastMouseX, lastMouseY);
+      api.send('set-mouse-over-pet', over);
+      touchState = over;
+      document.body.style.cursor = over ? 'grab' : '';
     }
   });
 
   document.addEventListener('mousemove', (e) => {
+    lastMouseX = e.clientX; lastMouseY = e.clientY;
     if (!document.body.classList.contains('clickthrough')) { ctHoverActive = false; return; }
-    /* Grabbable zone = the pet body plus a slim band around the rope, kept as
-       tight as possible so clicks aimed at apps underneath are only intercepted
-       where the pet is actually drawn. A little hysteresis (extra margin while
-       already active) stops the window from flickering between click-through
-       and interactive when the cursor rides the pet's edge. */
-    const s = stage.getBoundingClientRect();
-    const p = petContainer.getBoundingClientRect();
-    const cx = s.left + s.width / 2;
-    const m = ctHoverActive ? 12 : 0;
-    const onPet = e.clientX >= p.left - m && e.clientX <= p.right + m &&
-                  e.clientY >= p.top - m && e.clientY <= p.bottom + 10 + m;
-    const onRope = !onPet && e.clientY < p.top &&
-                   e.clientY >= s.top - m &&
-                   Math.abs(e.clientX - cx) <= 16 + m;
-    ctHoverActive = onPet || onRope;
+    /* Never flip hover state mid-drag: the main process keeps the window
+       interactive for the whole drag, and re-evaluating here could drop the
+       grab if the cursor outruns the pet body on a fast swipe. */
+    if (isDragging) return;
+    ctHoverActive = hoverAt(e.clientX, e.clientY);
     setTouchState(ctHoverActive);
   });
   document.addEventListener('mouseleave', () => { ctHoverActive = false; setTouchState(false); });
@@ -1051,6 +1869,8 @@
     totalDrag = 0;
     pressX = currentX = e.screenX;
     pressY = currentY = e.screenY;
+    dragTargetX = e.clientX;
+    dragTargetY = e.clientY;
     /* Pointer capture keeps every move event flowing to us at the cursor's
        native rate even when the cursor outruns the window or leaves it —
        fast drags can no longer be dropped or cancelled mid-flight. The
@@ -1062,9 +1882,25 @@
     dragVelX = 0;
     dragVelY = 0;
     leanSmooth = swingA;
+    if (usingElasticRope()) {
+      const last = physLastNode();
+      const prev = last ? PHYS.nodes[PHYS.nodes.length - 2] : null;
+      if (last && prev) {
+        rotateSmooth = Math.atan2(last.x - prev.x, Math.max(1, last.y - prev.y)) * 180 / Math.PI;
+      }
+    } else {
+      /* Snap the smoothed rig rotation to the grabbed angle immediately — without
+         this the easing filter keeps rotating the rig for a frame or two after the
+         hand-off, which reads as a tiny skip right when the drag starts. */
+      rotateSmooth = swingA * 180 / Math.PI;
+    }
     document.body.style.cursor = 'grabbing';
     document.body.classList.add('dragging');
     petContainer.classList.add('dragging');
+    /* Defensive: with click-through on, make sure the main process knows a
+       hover exists before the drag starts — the window must never flip to
+       ignoring input mid-drag. */
+    if (document.body.classList.contains('clickthrough')) api.send('set-mouse-over-pet', true);
     api.send('begin-drag');
     wakeRope();
     e.preventDefault();
@@ -1089,14 +1925,40 @@
     dragVelY = 0;
     activePointerId = null;
     api.send('end-drag');
+    /* Hand the window straight back to click-through after a drag ends (the
+       hover detector re-grabs it the next time the cursor comes to rest on the
+       pet). Without this, a released drag could leave click-through silently
+       off with the cursor still over the pet. */
+    if (document.body.classList.contains('clickthrough')) api.send('set-mouse-over-pet', false);
     if (released && wasMoved) {
-      /* Continuous handoff: swingA/swingV already carry the drag spring's
-         exact state, so the pendulum takes over seamlessly — no angle snap,
-         no forced velocity. A fast horizontal flick seeds the pendulum with
-         cursor-speed-derived angular velocity (rad/s ≈ v/L, capped so the arc
-         stays inside the window); a gentle release just lets it drift back. */
-      if (flickSpeed > 320) {
-        const kick = Math.min(2.0, Math.abs(dragVelX) * 0.001);
+      /* Continuous handoff: in the classic pendulum the drag spring's exact
+         swingA/swingV carry over so the swing takes over seamlessly, and a fast
+         horizontal flick seeds the pendulum with cursor-speed-derived angular
+         velocity. On the elastic rig the release instead kicks the BOB's
+         velocity — the spring does the rest (stretch, overshoot, oscillation,
+         settle). */
+      if (usingElasticRope()) {
+        /* The hand only ever held the free end, so the flick is handed to that
+           node: the recoil then travels the whole cord (wave, recoil, overshoot)
+           instead of being faked at the pet. */
+        const last = physLastNode();
+        if (last) {
+          if (flickSpeed > 200) {
+            last.vx += flickDir * Math.min(420, flickSpeed * 0.5);
+            last.vy += Math.min(140, Math.max(-140, dragVelY * 0.35));
+            spawnParticles(3, ['💨', '💨', '💫']);
+            setMood('excited');
+          } else {
+            spawnParticles(3, ['💫', '✨', '💚']);
+          }
+        }
+      } else if (flickSpeed > 200) {
+        /* flickSpeed is dragVelX captured before it is zeroed below; without
+           this the release kick multiplied a value that had already been reset
+           to 0, so a fast release never swung the pendulum in unlocked (window
+           follow) mode. Gain scaled up so an ordinary hand flick (~400-800 px/s)
+           lands a satisfying, visible arc. */
+        const kick = Math.min(2.0, flickSpeed * 0.0016);
         swingV = flickDir * Math.max(kick, Math.min(Math.abs(swingV), 2.0));
         spawnParticles(3, ['💨', '💨', '💫']);
         setMood('excited');
@@ -1128,6 +1990,8 @@
     dragVelY = dragVelY * 0.7 + (isFinite(vy) ? vy : 0) * 0.3;
     currentX = e.screenX;
     currentY = e.screenY;
+    dragTargetX = e.clientX;
+    dragTargetY = e.clientY;
     totalDrag = Math.sqrt((currentX - pressX) ** 2 + (currentY - pressY) ** 2);
     if (totalDrag > 6) dragMoved = true;
   });
@@ -1167,7 +2031,8 @@
   // --- IPC Listeners ---
   api.on('pet-image', setImage);
   api.on('position-lock', (unlocked) => {
-    stage.classList.toggle('move-mode', !!unlocked);
+    positionUnlocked = !!unlocked;
+    stage.classList.toggle('move-mode', positionUnlocked);
   });
   api.on('ground-shadow', (v) => {
     groundShadow.style.display = v ? '' : 'none';
@@ -1199,7 +2064,18 @@
        cursor-polled window deltas on top of it would push and pull the same
        state from two sources and make the pet shiver. */
     if (isDragging) return;
-    if (baseAnim === 'swing' && currentAnim === 'swing') {
+    if (usingElasticRope()) {
+      /* Programmatic glides move the anchor (and therefore the whole cord's
+         natural spot); the free end rides along with a gentle impulse. */
+      const last = physLastNode();
+      if (last) {
+        last.vx += m.dx * 2.5;
+        last.vy += m.dy * 2.5;
+        if (last.vx > 700) last.vx = 700; else if (last.vx < -700) last.vx = -700;
+        if (last.vy > 700) last.vy = 700; else if (last.vy < -700) last.vy = -700;
+        wakeRope();
+      }
+    } else if (baseAnim === 'swing' && currentAnim === 'swing') {
       const L = Math.max(1, ropeSegLen * ropeCfg.segs);
       /* Gentle impulse for programmatic glides (Reset Position, presets): the
          moving anchor carries the pendulum along naturally without whipping it. */
@@ -1210,6 +2086,14 @@
     }
   });
   api.on('rope-style', applyRopeStyle);
+  api.on('physics', (cfg) => {
+    if (cfg && typeof cfg === 'object' && cfg.reset) {
+      physicsResetConfig();
+      return;
+    }
+    setPhysicsFromIPC(cfg);
+    wakeRope();
+  });
   api.on('rope-length', (pct) => {
     const p = Math.max(40, Math.min(160, Number(pct) || 100));
     if (p !== ropeLengthPct) {

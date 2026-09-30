@@ -371,6 +371,42 @@
     font-size: 18px;
     font-weight: 700;
   }
+  .phys-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .phys-num {
+    box-sizing: border-box;
+    width: 100%;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px;
+    color: #e8e8f0;
+    font-size: 13px;
+    padding: 8px 10px;
+    outline: none;
+  }
+  .phys-num:focus { border-color: #48dbfb; }
+  input.phys-num[type=number]::-webkit-inner-spin-button { opacity: 1; }
+  .phys-select {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px;
+    color: #e8e8f0;
+    padding: 8px 10px;
+    font-size: 13px;
+    outline: none;
+    max-width: 170px;
+  }
+  .gravity-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .grav-chip { flex: 1 1 auto; }
+  .phys-pill-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .phys-pill.active {
+    border-color: #48dbfb !important;
+    color: #48dbfb !important;
+    background: rgba(72,219,251,0.12) !important;
+  }
   @media (max-width: 560px) {
     .option-item { flex-direction: column; align-items: stretch; }
     .option-item .btn { width: 100%; }
@@ -559,6 +595,83 @@
       <button class="btn btn-secondary rope-len-btn" id="ropeLenMinus" title="Shorter rope">−</button>
       <input type="range" id="ropeLen" min="50" max="150" step="5" value="100">
       <button class="btn btn-secondary rope-len-btn" id="ropeLenPlus" title="Longer rope">+</button>
+    </div>
+  </div>
+</div>
+
+<!-- ELASTIC ROPE PHYSICS -->
+<div class="section">
+  <div class="section-title">Elastic Rope Physics</div>
+  <div class="card" id="physicsCard">
+    <div class="option-list">
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🪢</div>
+          <div class="option-copy">
+            <b>Elastic Rope</b>
+            <span>The whole rope is a spring-mass chain: every link stretches, bends and carries the wave, with the Dangle hanging on the end. Turn it off for the classic stiff pendulum.</span>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="physicsBtn" style="flex:0 0 auto; min-width:170px;">Disable</button>
+      </div>
+      <div class="option-item">
+        <div class="option-info">
+          <div class="option-icon">🎛️</div>
+          <div class="option-copy">
+            <b>Preset</b>
+            <span>Tuned starting points — tweak any slider to go Custom.</span>
+          </div>
+        </div>
+        <select id="physPreset" class="phys-select" style="flex:0 0 auto;">
+          <option value="realistic">Realistic</option>
+          <option value="soft">Soft Rubber</option>
+          <option value="heavy">Heavy</option>
+          <option value="bouncy">Bouncy</option>
+          <option value="lowgrav">Low Gravity</option>
+          <option value="zero">Zero Gravity</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+    </div>
+    <label class="slider-label" style="margin-top:14px;">Rope Length <span id="physRopeLenVal">100%</span></label>
+    <input type="range" id="physRopeLen" min="50" max="150" step="5" value="100">
+    <label class="slider-label">Rope Segments <span id="physSegVal">12</span></label>
+    <input type="range" id="physSeg" min="4" max="30" step="1" value="12">
+    <label class="slider-label">Rope Elasticity <span id="physElastVal">50%</span></label>
+    <input type="range" id="physElast" min="0" max="100" step="1" value="50">
+    <label class="slider-label">Damping <span id="physDampVal">35%</span></label>
+    <input type="range" id="physDamp" min="0" max="100" step="1" value="35">
+    <label class="slider-label" style="margin-top:14px;">Maximum Stretch <span id="physStretchVal">200%</span></label>
+    <input type="range" id="physStretch" min="100" max="400" step="10" value="200">
+    <div class="phys-grid" style="margin-top:4px;">
+      <div>
+        <label class="slider-label">Rope Mass <span id="physRopeMassVal">0.5 kg</span></label>
+        <input type="number" id="physRopeMass" class="phys-num" min="0.1" max="2" step="0.1" value="0.5">
+      </div>
+      <div>
+        <label class="slider-label">Dangle Mass <span id="physMassVal">1.0 kg</span></label>
+        <input type="number" id="physMass" class="phys-num" min="0.1" max="10" step="0.1" value="1">
+      </div>
+    </div>
+    <div class="phys-grid" style="margin-top:4px;">
+      <div>
+        <label class="slider-label">Gravity <span id="physGravVal">9.81 m/s²</span></label>
+        <input type="number" id="physGrav" class="phys-num" min="0" max="30" step="0.1" value="9.81">
+      </div>
+    </div>
+    <div class="gravity-chips">
+      <button class="btn btn-secondary grav-chip" data-g="0">Off</button>
+      <button class="btn btn-secondary grav-chip" data-g="1.62">Moon</button>
+      <button class="btn btn-secondary grav-chip" data-g="9.81">Earth</button>
+      <button class="btn btn-secondary grav-chip" data-g="15">Heavy</button>
+      <button class="btn btn-secondary grav-chip" data-g="30">Extreme</button>
+    </div>
+    <div class="phys-pill-row" style="margin-top:18px;">
+      <button class="btn btn-secondary phys-pill active" id="physBending" title="The rope holds a smooth curve instead of kinking">Rope Bending</button>
+      <button class="btn btn-secondary phys-pill active" id="physSwing" title="Swing side to side on the rope">Rope Swing</button>
+      <button class="btn btn-secondary phys-pill active" id="physCompression" title="The rope can be squeezed shorter, down to a minimum link length">Rope Compression</button>
+      <button class="btn btn-secondary phys-pill active" id="physBounce" title="Soft bounce at the window edges and stretch limit">Rope Bounce</button>
+      <button class="btn btn-secondary" id="physReset" style="margin-left:auto;">Reset Physics</button>
     </div>
   </div>
 </div>
@@ -1027,10 +1140,16 @@
   };
 
   // --- Rope Length (applies live to the pet; +/- steps by one notch) ---
+  // One value, two sliders: the rope card and the physics panel both drive the
+  // same preference, and whichever moved sees its own control update.
   function sendRopeLen(v) {
     const cv = Math.max(50, Math.min(150, v));
     ropeLenSlider.value = cv;
     ropeLenVal.textContent = cv + '%';
+    const mirror = document.getElementById('physRopeLen');
+    if (mirror && mirror.value !== String(cv)) mirror.value = cv;
+    const mirrorVal = document.getElementById('physRopeLenVal');
+    if (mirrorVal) mirrorVal.textContent = cv + '%';
     api.send('set-rope-length', cv);
   }
   ropeLenSlider.oninput = () => sendRopeLen(parseInt(ropeLenSlider.value, 10));
@@ -1202,6 +1321,174 @@
       ropeTexture = s.texture;
       ropeTextures.querySelectorAll('.tex-btn').forEach((b) => b.classList.toggle('active', b.dataset.tex === s.texture));
     }
+  });
+
+  // --- Elastic rope physics ---
+  const physicsBtn = document.getElementById('physicsBtn');
+  const physicsCard = document.getElementById('physicsCard');
+  const physRopeLen = document.getElementById('physRopeLen');
+  const physSeg = document.getElementById('physSeg');
+  const physElast = document.getElementById('physElast');
+  const physDamp = document.getElementById('physDamp');
+  const physStretch = document.getElementById('physStretch');
+  const physRopeMass = document.getElementById('physRopeMass');
+  const physMass = document.getElementById('physMass');
+  const physGrav = document.getElementById('physGrav');
+  const physPreset = document.getElementById('physPreset');
+  const physBendingBtn = document.getElementById('physBending');
+  const physSwingBtn = document.getElementById('physSwing');
+  const physCompressionBtn = document.getElementById('physCompression');
+  const physBounceBtn = document.getElementById('physBounce');
+  const physResetBtn = document.getElementById('physReset');
+  const physRopeLenVal = document.getElementById('physRopeLenVal');
+  const physSegVal = document.getElementById('physSegVal');
+  const physElastVal = document.getElementById('physElastVal');
+  const physDampVal = document.getElementById('physDampVal');
+  const physStretchVal = document.getElementById('physStretchVal');
+  const physRopeMassVal = document.getElementById('physRopeMassVal');
+  const physMassVal = document.getElementById('physMassVal');
+  const physGravVal = document.getElementById('physGravVal');
+
+  let phys = {
+    enabled: true, elasticity: 50, mass: 1, ropeMass: 0.5, segments: 12,
+    gravity: 9.81, damping: 35, maxStretch: 200, ropeSwing: true, ropeBounce: true,
+    ropeBending: true, ropeCompression: true, preset: 'realistic'
+  };
+
+  const PHYS_PRESETS = {
+    realistic: { elasticity: 50,  mass: 1,   ropeMass: 0.5, segments: 12, gravity: 9.81, damping: 35, maxStretch: 200 },
+    soft:      { elasticity: 70,  mass: 0.8, ropeMass: 0.9, segments: 16, gravity: 9.81, damping: 25, maxStretch: 250 },
+    heavy:     { elasticity: 30,  mass: 5,   ropeMass: 1.2, segments: 10, gravity: 9.81, damping: 55, maxStretch: 150 },
+    bouncy:    { elasticity: 80,  mass: 1,   ropeMass: 0.3, segments: 14, gravity: 9.81, damping: 15, maxStretch: 300 },
+    lowgrav:   { elasticity: 60,  mass: 1,   ropeMass: 0.5, segments: 14, gravity: 1.62, damping: 25, maxStretch: 300 },
+    zero:      { elasticity: 60,  mass: 1,   ropeMass: 0.5, segments: 14, gravity: 0,    damping: 20, maxStretch: 300 }
+  };
+
+  function physicsLabels() {
+    physRopeLenVal.textContent = phys.ropeLength + '%';
+    physSegVal.textContent = phys.segments;
+    physElastVal.textContent = phys.elasticity + '%';
+    physDampVal.textContent = phys.damping + '%';
+    physStretchVal.textContent = phys.maxStretch + '%';
+    physRopeMassVal.textContent = Number(phys.ropeMass).toFixed(1) + ' kg';
+    physMassVal.textContent = Number(phys.mass).toFixed(1) + ' kg';
+    physGravVal.textContent = (phys.gravity >= 10 ? Number(phys.gravity).toFixed(1) : Number(phys.gravity).toFixed(2)) + ' m/s²';
+  }
+
+  function physicsSend() { api.send('set-physics', phys); }
+
+  /* A preset in the select is a starting point: any manual tweak flips it to
+     Custom. Choosing a preset applies its full parameter set (gravity chips and
+     pill toggles stay user-controlled). */
+  function physicsPresetChanged() {
+    const name = physPreset.value;
+    if (name === 'custom' || !PHYS_PRESETS[name]) {
+      physPreset.value = 'custom';
+      return;
+    }
+    Object.assign(phys, PHYS_PRESETS[name]);
+    phys.preset = name;
+    updatePhysicsUI(phys);
+    physicsSend();
+  }
+  physPreset.onchange = physicsPresetChanged;
+
+  function physicsTweak() {
+    phys.preset = 'custom';
+    physPreset.value = 'custom';
+    physicsLabels();
+    physicsSend();
+  }
+
+  physRopeLen.oninput = () => { sendRopeLen(parseInt(physRopeLen.value, 10)); };
+  physSeg.oninput = () => { phys.segments = parseInt(physSeg.value, 10); physicsTweak(); };
+  physElast.oninput = () => { phys.elasticity = parseInt(physElast.value, 10); physicsTweak(); };
+  physDamp.oninput = () => { phys.damping = parseInt(physDamp.value, 10); physicsTweak(); };
+  physStretch.oninput = () => { phys.maxStretch = parseInt(physStretch.value, 10); physicsTweak(); };
+  physRopeMass.oninput = () => {
+    let v = parseFloat(physRopeMass.value);
+    if (!isFinite(v)) v = 0.5;
+    phys.ropeMass = Math.max(0.1, Math.min(2, v));
+    physicsTweak();
+  };
+  physMass.oninput = () => {
+    let v = parseFloat(physMass.value);
+    if (!isFinite(v)) v = 1;
+    phys.mass = Math.max(0.1, Math.min(10, v));
+    physicsTweak();
+  };
+  physGrav.oninput = () => {
+    let v = parseFloat(physGrav.value);
+    if (!isFinite(v)) v = 9.81;
+    phys.gravity = Math.max(0, Math.min(30, v));
+    physicsTweak();
+  };
+
+  document.querySelectorAll('.grav-chip').forEach((chip) => {
+    chip.onclick = () => {
+      phys.gravity = parseFloat(chip.dataset.g);
+      physGrav.value = phys.gravity;
+      physicsTweak();
+    };
+  });
+
+  function physicsTogglePill(btn, key, on) {
+    btn.classList.toggle('active', on);
+    phys[key] = on;
+    physicsSend();
+  }
+  physBendingBtn.onclick = () => physicsTogglePill(physBendingBtn, 'ropeBending', !phys.ropeBending);
+  physSwingBtn.onclick = () => physicsTogglePill(physSwingBtn, 'ropeSwing', !phys.ropeSwing);
+  physCompressionBtn.onclick = () => physicsTogglePill(physCompressionBtn, 'ropeCompression', !phys.ropeCompression);
+  physBounceBtn.onclick = () => physicsTogglePill(physBounceBtn, 'ropeBounce', !phys.ropeBounce);
+
+  function renderPhysicsEnabled() {
+    physicsBtn.textContent = phys.enabled ? 'Disable' : 'Enable';
+    physicsBtn.classList.toggle('active', !phys.enabled);
+    physicsCard.style.opacity = phys.enabled ? '1' : '0.55';
+  }
+
+  function setPhysicsEnabled(on) {
+    phys.enabled = on;
+    renderPhysicsEnabled();
+    physicsSend();
+  }
+  physicsBtn.onclick = () => setPhysicsEnabled(!phys.enabled);
+
+  physResetBtn.onclick = () => api.send('set-physics', { reset: true });
+
+  /* Live view: the panel mirrors whatever the pet/main have (persisted values
+     load here after the async IPC resolves, and every change comes back here
+     sanitized — so the panel always shows what actually runs). */
+  function updatePhysicsUI(cfg) {
+    if (!cfg || typeof cfg !== 'object') return;
+    Object.assign(phys, cfg);
+    phys.enabled = !!cfg.enabled;
+    physRopeLen.value = phys.ropeLength;
+    physSeg.value = phys.segments;
+    physElast.value = phys.elasticity;
+    physDamp.value = phys.damping;
+    physStretch.value = phys.maxStretch;
+    physRopeMass.value = phys.ropeMass;
+    physMass.value = phys.mass;
+    physGrav.value = phys.gravity;
+    physPreset.value = PHYS_PRESETS[cfg.preset] ? cfg.preset : 'custom';
+    physBendingBtn.classList.toggle('active', !!phys.ropeBending);
+    physSwingBtn.classList.toggle('active', !!phys.ropeSwing);
+    physCompressionBtn.classList.toggle('active', !!phys.ropeCompression);
+    physBounceBtn.classList.toggle('active', !!phys.ropeBounce);
+    document.querySelectorAll('.grav-chip').forEach((chip) => {
+      chip.classList.toggle('active', Math.abs(parseFloat(chip.dataset.g) - phys.gravity) < 0.001);
+    });
+    renderPhysicsEnabled();
+    physicsLabels();
+  }
+  api.invoke('get-physics').then(updatePhysicsUI);
+  api.on('physics', updatePhysicsUI);
+  api.on('rope-length', (v) => {
+    phys.ropeLength = v;
+    physRopeLen.value = v;
+    physicsLabels();
   });
 })();
 </script>
