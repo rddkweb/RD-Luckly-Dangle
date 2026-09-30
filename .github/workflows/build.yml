@@ -1,11 +1,10 @@
-```yaml
 name: Build
 
-on:
+"on":
   workflow_dispatch:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -25,10 +24,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Read version
-        id: ver
-        run: node -e "const fs=require('fs');fs.appendFileSync(process.env.GITHUB_OUTPUT,'version='+require('./package.json').version+'\n')"
-
       - name: Install dependencies
         run: npm ci
 
@@ -39,7 +34,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DanglePet-Setup-${{ github.run_id }}
-          path: dist/DanglePet Setup 2.0.0.exe
+          path: dist/*.exe
           if-no-files-found: error
 
       - name: Attach installer to release
@@ -49,4 +44,3 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" "$GITHUB_WORKSPACE"/dist/*.exe --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
